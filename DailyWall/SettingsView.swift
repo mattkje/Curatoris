@@ -308,7 +308,7 @@ public struct SettingsView: View {
     @State private var showingAPIInfo: Bool = false
 
     private let times = (0..<24).map { String(format: "%02d:00", $0) }
-    private let builtInSources = ["Bing (Only 1080p)", "Picsum", "Pexels"]
+    private let builtInSources = ["DailyWall","Bing (Only 1080p)", "Picsum", "Pexels"]
 
     public init() {}
 
@@ -582,7 +582,7 @@ public struct SettingsView: View {
         KeychainHelper.delete(for: src.url)
         model.customSources.removeAll { $0.url == src.url }
         if model.imageSource == src.url {
-            model.imageSource = builtInSources.first ?? "Bing (Only 1080p)"
+            model.imageSource = builtInSources.first ?? "DailyWall"
         }
     }
 

@@ -6,6 +6,7 @@ import Security
 class MenuBarController: NSObject, ObservableObject {
 
     enum BuiltInSource: String, CaseIterable {
+        case dailywall = "DailyWall"
         case bing   = "Bing (Only 1080p)"
         case picsum = "Picsum"
         case pexels = "Pexels"
@@ -305,6 +306,7 @@ struct WallpaperSourceProvider {
     /// `selectionKey` is the rawValue for built-ins, or the URL string for custom sources.
     func source(forSelectionKey key: String) -> WallpaperSource {
         switch MenuBarController.BuiltInSource(rawValue: key) {
+        case .dailywall: return DailyWallSource()
         case .bing:   return BingSource()
         case .picsum: return PicsumSource()
         case .pexels: return PexelsSource()
@@ -327,6 +329,28 @@ struct BingSource: WallpaperSource {
 struct PicsumSource: WallpaperSource {
     func fetchImageURL() async throws -> URL? {
         URL(string: "https://picsum.photos/3840/2160")
+    }
+}
+
+struct DailyWallSource: WallpaperSource {
+    private func apiKey() -> String? {
+        if let env = ProcessInfo.processInfo.environment["DAILY_WALL_API_KEY"], !env.isEmpty { return env }
+        if let plist = Bundle.main.object(forInfoDictionaryKey: "DailyWallAPIKey") as? String, !plist.isEmpty { return plist }
+        return nil
+    }
+    
+    func fetchImageURL() async throws -> URL? {
+        guard let apiKey = apiKey() else { return nil }
+        var comps = URLComponents(string: "https://dailywall.mattikjellstadli.com/api/daily-wall")!
+        var request = URLRequest(url: comps.url!)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let str = json["url"] as? String {
+            return URL(string: str)
+        }
+        return nil
     }
 }
 

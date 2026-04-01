@@ -13,5 +13,7 @@
 	</array>
     <key>PexelsAPIKey</key>
     <string>$(PEXELS_API_KEY)</string>
+    <key>DailyWallAPIKey</key>
+    <string>$(DAILY_WALL_API_KEY)</string>
 </dict>
 </plist>
