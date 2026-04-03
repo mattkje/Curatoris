@@ -107,7 +107,7 @@ private struct AboutView: View {
                     LinkButton(
                         title: "Website",
                         systemImage: "globe",
-                        url: "https://mattikjellstadli.com/product/25"
+                        url: "https://dailywall.mattikjellstadli.com"
                     )
                     LinkButton(
                         title: "GitHub",
