@@ -1,13 +1,13 @@
 //
-//  DailyWallUITestsLaunchTests.swift
-//  DailyWallUITests
+//  CuratorisUITestsLaunchTests.swift
+//  CuratorisUITests
 //
 //  Created by Matti Kjellstadli on 06/03/2026.
 //
 
 import XCTest
 
-final class DailyWallUITestsLaunchTests: XCTestCase {
+final class CuratorisUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

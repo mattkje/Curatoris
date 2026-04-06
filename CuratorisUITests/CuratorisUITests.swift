@@ -1,13 +1,13 @@
 //
-//  DailyWallUITests.swift
-//  DailyWallUITests
+//  CuratorisUITests.swift
+//  CuratorisUITests
 //
 //  Created by Matti Kjellstadli on 06/03/2026.
 //
 
 import XCTest
 
-final class DailyWallUITests: XCTestCase {
+final class CuratorisUITests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

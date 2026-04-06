@@ -410,14 +410,14 @@ struct PicsumSource: WallpaperSource {
 
 struct CuratorisSource: WallpaperSource {
     private func apiKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["DAILY_WALL_API_KEY"], !env.isEmpty { return env }
+        if let env = ProcessInfo.processInfo.environment["CURATORIS_API_KEY"], !env.isEmpty { return env }
         if let plist = Bundle.main.object(forInfoDictionaryKey: "CuratorisAPIKey") as? String, !plist.isEmpty { return plist }
         return nil
     }
 
     func fetchImageURL() async throws -> URL? {
         guard let apiKey = apiKey() else { return nil }
-        let comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/daily-wall")!
+        let comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris")!
         var request = URLRequest(url: comps.url!)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
