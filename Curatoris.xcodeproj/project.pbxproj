@@ -15,11 +15,9 @@
 		104943AC2F83F63F008E312F /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1049439E2F83F63F008E312F /* SettingsWindowController.swift */; };
 		104943AE2F83F63F008E312F /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104943942F83F63F008E312F /* AboutView.swift */; };
 		104943AF2F83F63F008E312F /* WallpaperManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104943922F83F63F008E312F /* WallpaperManager.swift */; };
-		104943B02F83F63F008E312F /* Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 104943972F83F63F008E312F /* Config.xcconfig */; };
 		104943B12F83F63F008E312F /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 1049439A2F83F63F008E312F /* Info.plist */; };
 		104943B22F83F63F008E312F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 104943962F83F63F008E312F /* Assets.xcassets */; };
 		104943B32F83F63F008E312F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 104943952F83F63F008E312F /* AppIcon.icon */; };
-		104943B42F83F63F008E312F /* Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 104943972F83F63F008E312F /* Config.xcconfig */; };
 		104943B52F83F63F008E312F /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 1049439A2F83F63F008E312F /* Info.plist */; };
 		104943B62F83F63F008E312F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 104943962F83F63F008E312F /* Assets.xcassets */; };
 		104943B72F83F63F008E312F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 104943952F83F63F008E312F /* AppIcon.icon */; };
@@ -39,8 +37,6 @@
 		104943CA2F83F63F008E312F /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1049439E2F83F63F008E312F /* SettingsWindowController.swift */; };
 		104943CC2F83F63F008E312F /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104943942F83F63F008E312F /* AboutView.swift */; };
 		104943CD2F83F63F008E312F /* WallpaperManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104943922F83F63F008E312F /* WallpaperManager.swift */; };
-		104943CE2F83F63F008E312F /* Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 104943972F83F63F008E312F /* Config.xcconfig */; };
-		104943CF2F83F63F008E312F /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 1049439A2F83F63F008E312F /* Info.plist */; };
 		104943D02F83F63F008E312F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 104943962F83F63F008E312F /* Assets.xcassets */; };
 		104943D12F83F63F008E312F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 104943952F83F63F008E312F /* AppIcon.icon */; };
 /* End PBXBuildFile section */
@@ -242,7 +238,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					1017B58F2F5AA98A00BAFB1A = {
 						CreatedOnToolsVersion = 26.3;
@@ -283,8 +279,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				104943CE2F83F63F008E312F /* Config.xcconfig in Resources */,
-				104943CF2F83F63F008E312F /* Info.plist in Resources */,
 				104943D02F83F63F008E312F /* Assets.xcassets in Resources */,
 				104943D12F83F63F008E312F /* AppIcon.icon in Resources */,
 			);
@@ -294,7 +288,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				104943B02F83F63F008E312F /* Config.xcconfig in Resources */,
 				104943B12F83F63F008E312F /* Info.plist in Resources */,
 				104943B22F83F63F008E312F /* Assets.xcassets in Resources */,
 				104943B32F83F63F008E312F /* AppIcon.icon in Resources */,
@@ -305,7 +298,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				104943B42F83F63F008E312F /* Config.xcconfig in Resources */,
 				104943B52F83F63F008E312F /* Info.plist in Resources */,
 				104943B62F83F63F008E312F /* Assets.xcassets in Resources */,
 				104943B72F83F63F008E312F /* AppIcon.icon in Resources */,
@@ -411,6 +403,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -436,6 +429,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -476,6 +470,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -494,6 +489,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -506,6 +502,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
@@ -544,6 +541,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
@@ -580,6 +578,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
@@ -601,6 +600,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
@@ -621,6 +621,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -640,6 +641,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = XBBW4HGHAD;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;

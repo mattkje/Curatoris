@@ -193,8 +193,8 @@ class MenuBarController: NSObject, ObservableObject {
                 let currentSource = UserDefaults.standard.string(forKey: "imageSource")
                     ?? BuiltInSource.curatoris.rawValue
                 let source = sourceProvider.source(forSelectionKey: currentSource)
-                var imageURL: URL? = nil
-                var usedDate: Date? = overrideDate
+                let imageURL: URL?
+                let usedDate = overrideDate
                 if let curatorisSource = source as? CuratorisSource {
                     let dateString: String? = {
                         guard let date = usedDate else { return nil }
@@ -268,41 +268,45 @@ class MenuBarController: NSObject, ObservableObject {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            if self.refreshOnWake || (self.autoRefreshEnabled && self.needsDailyUpdate()) {
-                self.setWallpaper()
+            Task { @MainActor in
+                if self.refreshOnWake || (self.autoRefreshEnabled && self.needsDailyUpdate()) {
+                    self.setWallpaper()
+                }
+                if self.autoRefreshEnabled { self.scheduleRefresh() }
             }
-            if self.autoRefreshEnabled { self.scheduleRefresh() }
         }
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            if self.autoRefreshEnabled && self.needsDailyUpdate() { self.setWallpaper() }
+            Task { @MainActor in
+                if self.autoRefreshEnabled && self.needsDailyUpdate() { self.setWallpaper() }
+            }
         }
 
         let ud = UserDefaults.standard
         defaultsObservers = [
             ud.observe(\.imageSource, options: [.new]) { [weak self] _, change in
-                guard let self, let val = change.newValue as? String else { return }
+                guard let self, let val = change.newValue else { return }
                 Task { @MainActor in
                     if self.imageSourceSelection != val { self.imageSourceSelection = val }
                 }
             },
             ud.observe(\.autoRefreshEnabled, options: [.new]) { [weak self] _, change in
-                guard let self, let val = change.newValue as? Bool else { return }
+                guard let self, let val = change.newValue else { return }
                 Task { @MainActor in
                     if self.autoRefreshEnabled != val { self.autoRefreshEnabled = val }
                 }
             },
             ud.observe(\.everyHourEnabled, options: [.new]) { [weak self] _, change in
-                guard let self, let val = change.newValue as? Bool else { return }
+                guard let self, let val = change.newValue else { return }
                 Task { @MainActor in
                     if self.everyHourEnabled != val { self.everyHourEnabled = val }
                 }
             },
             ud.observe(\.refreshTime, options: [.new]) { [weak self] _, change in
-                guard let self, let val = change.newValue as? String else { return }
+                guard let self, let val = change.newValue else { return }
                 Task { @MainActor in
                     if self.refreshTime != val { self.refreshTime = val }
                 }
@@ -382,7 +386,11 @@ class MenuBarController: NSObject, ObservableObject {
             var next        = startOfHour
             if next <= now { next = calendar.date(byAdding: .hour, value: 1, to: startOfHour) ?? now.addingTimeInterval(3600) }
             refreshTimer = Timer.scheduledTimer(withTimeInterval: next.timeIntervalSinceNow, repeats: false) { [weak self] _ in
-                Task { @MainActor in self?.setWallpaper(); self?.scheduleRefresh() }
+                guard let self else { return }
+                Task { @MainActor in
+                    self.setWallpaper()
+                    self.scheduleRefresh()
+                }
             }
             return
         }
@@ -395,7 +403,11 @@ class MenuBarController: NSObject, ObservableObject {
             next = calendar.date(byAdding: .day, value: 1, to: next) ?? now.addingTimeInterval(86400)
         }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: next.timeIntervalSinceNow, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.setWallpaper(); self?.scheduleRefresh() }
+            guard let self else { return }
+            Task { @MainActor in
+                self.setWallpaper()
+                self.scheduleRefresh()
+            }
         }
     }
 
