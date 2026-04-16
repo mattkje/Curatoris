@@ -39,6 +39,11 @@ class MenuBarController: NSObject, ObservableObject {
     @Published var imageSourceSelection: String {
         didSet {
             UserDefaults.standard.set(imageSourceSelection, forKey: "imageSource")
+            if imageSourceSelection == BuiltInSource.curatoris.rawValue {
+                curatorisChainDate = today()
+            } else {
+                curatorisChainDate = nil
+            }
             updateMenuBar()
         }
     }
@@ -48,6 +53,7 @@ class MenuBarController: NSObject, ObservableObject {
             if autoRefreshEnabled { scheduleRefresh() }
         }
     }
+    @Published var curatorisChainDate: Date? = nil
 
     private var statusItem: NSStatusItem?
     private var refreshTimer: Timer?
@@ -71,8 +77,11 @@ class MenuBarController: NSObject, ObservableObject {
         self.lastUpdateTime       = UserDefaults.standard.object(forKey: "lastUpdateTime") as? Date
         self.everyHourEnabled     = UserDefaults.standard.bool(forKey: "everyHourEnabled")
         self.imageSourceSelection = UserDefaults.standard.string(forKey: "imageSource") ?? BuiltInSource.curatoris.rawValue
-
+        self.curatorisChainDate   = nil
         super.init()
+        if self.imageSourceSelection == BuiltInSource.curatoris.rawValue {
+            self.curatorisChainDate = today()
+        }
         DispatchQueue.main.async {
             self.setupMenuBar()
             self.requestNotificationPermissionIfNeeded()
@@ -96,7 +105,7 @@ class MenuBarController: NSObject, ObservableObject {
         guard let statusItem = self.statusItem else { return }
         let menu = NSMenu()
 
-        let setItem = NSMenuItem(title: "Set Wallpaper Now", action: #selector(setWallpaper), keyEquivalent: "w")
+        let setItem = NSMenuItem(title: "Set Wallpaper Now", action: #selector(setWallpaper(_:)), keyEquivalent: "w")
         setItem.target = self
         menu.addItem(setItem)
 
@@ -107,6 +116,24 @@ class MenuBarController: NSObject, ObservableObject {
         )
         autoItem.target = self
         menu.addItem(autoItem)
+        
+        // Only show previous/next if Curatoris is selected
+        if isCuratorisSourceSelected() {
+            let previousItem = NSMenuItem(title: "Previous", action: #selector(previous(_:)), keyEquivalent: "")
+            previousItem.target = self
+            previousItem.isEnabled = curatorisChainDate != nil && curatorisChainDate! > Date(timeIntervalSince1970: 0)
+            menu.addItem(previousItem)
+
+            let nextItem = NSMenuItem(title: "Next", action: #selector(next(_:)), keyEquivalent: "")
+            nextItem.target = self
+            if let chainDate = curatorisChainDate {
+                let today = self.today()
+                nextItem.isEnabled = Calendar.current.compare(chainDate, to: today, toGranularity: .day) == .orderedAscending
+            } else {
+                nextItem.isEnabled = false
+            }
+            menu.addItem(nextItem)
+        }
 
         menu.addItem(.separator())
 
@@ -151,24 +178,88 @@ class MenuBarController: NSObject, ObservableObject {
     @objc private func showAbout()             { AboutWindowController.shared.showWindow() }
     @objc private func checkForUpdatesTapped() { checkForUpdates(silentIfUpToDate: false) }
 
-    @objc func setWallpaper() {
+    @objc func setWallpaper(_ sender: AnyObject?) {
+        if isCuratorisSourceSelected() {
+            resetCuratorisChainToToday()
+            setWallpaperForCuratorisChainDate()
+        } else {
+            setWallpaper()
+        }
+    }
+    @objc func setWallpaper(overrideDate: Date? = nil) {
         guard !isInExcludedHours() else { return }
         Task { @MainActor in
             do {
                 let currentSource = UserDefaults.standard.string(forKey: "imageSource")
                     ?? BuiltInSource.curatoris.rawValue
                 let source = sourceProvider.source(forSelectionKey: currentSource)
-                guard let imageURL = try await source.fetchImageURL() else { return }
+                var imageURL: URL? = nil
+                var usedDate: Date? = overrideDate
+                if let curatorisSource = source as? CuratorisSource {
+                    let dateString: String? = {
+                        guard let date = usedDate else { return nil }
+                        let formatter = DateFormatter()
+                        formatter.dateFormat = "yyyy-MM-dd"
+                        return formatter.string(from: date)
+                    }()
+                    imageURL = try await curatorisSource.fetchImageURL(for: dateString)
+                } else {
+                    imageURL = try await source.fetchImageURL()
+                }
+                guard let imageURL else { return }
                 let localPath = try await wallpaperManager.downloadImage(from: imageURL)
                 let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
                 try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
-                self.lastUpdateTime = Date()
+                // Only update lastUpdateTime if not navigating history
+                if overrideDate == nil {
+                    self.lastUpdateTime = Date()
+                }
                 appendHistory(imageURL: imageURL.absoluteString, source: currentSource)
                 saveWallpaperToFolder(at: localPath)
                 sendUpdateNotificationIfEnabled()
             } catch {
                 print("Error setting wallpaper: \(error)")
             }
+        }
+    }
+
+    // --- CLEANUP: Remove debug logs from Curatoris navigation and API ---
+    private func setWallpaperForCuratorisChainDate() {
+        guard let date = curatorisChainDate else { return }
+        Task { @MainActor in
+            do {
+                let source = CuratorisSource()
+                let dateString = formattedChainDate()
+                let imageURL = try await source.fetchImageURL(for: dateString)
+                guard let imageURL else { return }
+                let localPath = try await wallpaperManager.downloadImage(from: imageURL)
+                let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
+                try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
+                self.lastUpdateTime = date
+                appendHistory(imageURL: imageURL.absoluteString, source: BuiltInSource.curatoris.rawValue)
+                saveWallpaperToFolder(at: localPath)
+                sendUpdateNotificationIfEnabled()
+            } catch {
+                // Optionally log error in production
+            }
+        }
+    }
+
+    @objc func previous(_ sender: AnyObject?) {
+        guard isCuratorisSourceSelected(), let chainDate = curatorisChainDate else { return }
+        let prev = Calendar.current.date(byAdding: .day, value: -1, to: chainDate)!
+        curatorisChainDate = prev
+        autoRefreshEnabled = false
+        setWallpaperForCuratorisChainDate()
+    }
+
+    @objc func next(_ sender: AnyObject?) {
+        guard isCuratorisSourceSelected(), let chainDate = curatorisChainDate else { return }
+        let today = self.today()
+        let next = Calendar.current.date(byAdding: .day, value: 1, to: chainDate)!
+        if Calendar.current.compare(next, to: today, toGranularity: .day) != .orderedDescending {
+            curatorisChainDate = next
+            setWallpaperForCuratorisChainDate()
         }
     }
 
@@ -366,6 +457,25 @@ class MenuBarController: NSObject, ObservableObject {
             }
         }
     }
+
+    private func isCuratorisSourceSelected() -> Bool {
+        imageSourceSelection == BuiltInSource.curatoris.rawValue
+    }
+
+    private func today() -> Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    private func formattedChainDate() -> String? {
+        guard let date = curatorisChainDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func resetCuratorisChainToToday() {
+        curatorisChainDate = today()
+    }
 }
 
 extension UserDefaults {
@@ -415,9 +525,15 @@ struct CuratorisSource: WallpaperSource {
         return nil
     }
 
-    func fetchImageURL() async throws -> URL? {
+    // Accepts an optional date string in yyyy-MM-dd format
+    func fetchImageURL(for date: String? = nil) async throws -> URL? {
         guard let apiKey = apiKey() else { return nil }
-        let comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris")!
+        var comps: URLComponents
+        if let date = date {
+            comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris/\(date)")!
+        } else {
+            comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris")!
+        }
         var request = URLRequest(url: comps.url!)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -425,6 +541,10 @@ struct CuratorisSource: WallpaperSource {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let str = json["url"] as? String { return URL(string: str) }
         return nil
+    }
+
+    func fetchImageURL() async throws -> URL? {
+        return try await fetchImageURL(for: nil)
     }
 }
 
