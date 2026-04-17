@@ -42,7 +42,7 @@ final class WallpaperManager {
                 do {
                     try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
                     // Verify wallpaper actually changed
-                    let current = try? NSWorkspace.shared.desktopImageURL(for: screen)
+                    let current = NSWorkspace.shared.desktopImageURL(for: screen)
                     if current?.path != path { allSucceeded = false }
                 } catch {
                     allSucceeded = false
