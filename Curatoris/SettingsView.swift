@@ -85,6 +85,7 @@ struct WallpaperHistoryEntry: Codable, Identifiable, Equatable {
 @MainActor
 final class SettingsModel: ObservableObject {
     @Published var autoRefreshEnabled: Bool       { didSet { UserDefaults.standard.set(autoRefreshEnabled,       forKey: "autoRefreshEnabled") } }
+    @Published var useOsascriptForWallpaper: Bool { didSet { UserDefaults.standard.set(useOsascriptForWallpaper, forKey: "useOsascriptForWallpaper") } }
     @Published var refreshTime: String             { didSet { UserDefaults.standard.set(refreshTime,             forKey: "refreshTime") } }
     @Published var everyHourEnabled: Bool          { didSet { UserDefaults.standard.set(everyHourEnabled,        forKey: "everyHourEnabled") } }
     @Published var manualRefreshTimeEnabled: Bool  { didSet { UserDefaults.standard.set(manualRefreshTimeEnabled,forKey: "manualRefreshTimeEnabled") } }
@@ -119,6 +120,7 @@ final class SettingsModel: ObservableObject {
 
     init() {
         self.autoRefreshEnabled       = UserDefaults.standard.bool(forKey: "autoRefreshEnabled")
+        self.useOsascriptForWallpaper = UserDefaults.standard.bool(forKey: "useOsascriptForWallpaper")
         self.refreshTime              = UserDefaults.standard.string(forKey: "refreshTime") ?? "08:00"
         self.everyHourEnabled         = UserDefaults.standard.bool(forKey: "everyHourEnabled")
         self.manualRefreshTimeEnabled = UserDefaults.standard.bool(forKey: "manualRefreshTimeEnabled")
@@ -815,6 +817,18 @@ public struct SettingsView: View {
                 }
             } header: {
                 Label("System", systemImage: "macwindow.on.rectangle")
+            }
+
+            Section {
+                Toggle(isOn: $model.useOsascriptForWallpaper) {
+                    Label("Use osascript to set wallpaper", systemImage: "terminal.fill")
+                }
+                .help("Enable this if your device requires using AppleScript (osascript) to set the wallpaper.")
+            } header: {
+                Label("Compatibility", systemImage: "exclamationmark.triangle.fill")
+            } footer: {
+                Text("Some managed Macs require AppleScript to set the wallpaper. If the default method fails, try enabling this.")
+                    .font(.caption)
             }
 
             Section {
