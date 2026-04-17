@@ -37,8 +37,43 @@ final class WallpaperManager {
                 .imageScaling:   fillMode.rawValue,
                 .allowClipping:  allowClipping
             ]
+            var allSucceeded = true
             for screen in NSScreen.screens {
-                try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
+                do {
+                    try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
+                    // Verify wallpaper actually changed
+                    let current = try? NSWorkspace.shared.desktopImageURL(for: screen)
+                    if current?.path != path { allSucceeded = false }
+                } catch {
+                    allSucceeded = false
+                }
+            }
+            if !allSucceeded {
+                WallpaperManager.promptEnableOsascriptIfNeeded()
+            }
+        }
+    }
+    static func isLikelyManagedMac() -> Bool {
+        let managedPaths = [
+            "/Library/Managed Preferences/",
+            "/Library/Profiles/",
+            "/Library/Preferences/com.apple.ManagedClient.plist"
+        ]
+        let fileManager = FileManager.default
+        return managedPaths.contains { fileManager.fileExists(atPath: $0) }
+    }
+    static func promptEnableOsascriptIfNeeded() {
+        guard !shouldUseOsascript(), isLikelyManagedMac() else { return }
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Managed Mac Detected"
+            alert.informativeText = "Your Mac appears to be managed or restricted. Would you like to enable the AppleScript (osascript) workaround for setting the wallpaper?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Enable Workaround")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                UserDefaults.standard.set(true, forKey: "useOsascriptForWallpaper")
             }
         }
     }
