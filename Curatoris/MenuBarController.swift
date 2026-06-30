@@ -8,7 +8,7 @@ class MenuBarController: NSObject, ObservableObject {
 
     enum BuiltInSource: String, CaseIterable {
         case curatoris = "Curatoris"
-        case bing      = "Bing (Only 1080p)"
+        case bing      = "Bing"
         case picsum    = "Picsum"
         case pexels    = "Pexels"
     }
@@ -117,11 +117,11 @@ class MenuBarController: NSObject, ObservableObject {
         )
         autoItem.target = self
         menu.addItem(autoItem)
-        
+
         // Only show previous/next if Curatoris is selected
         if isCuratorisSourceSelected() {
             menu.addItem(.separator())
-            
+
             let cuatorisLabel = NSMenuItem(title: "Curatoris Source Features", action: nil, keyEquivalent: "")
             cuatorisLabel.isEnabled = false
             cuatorisLabel.image = NSImage(named: "MenuBarIcon")
@@ -533,12 +533,19 @@ struct WallpaperSourceProvider {
 
 struct BingSource: WallpaperSource {
     func fetchImageURL() async throws -> URL? {
-        let url = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1")!
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1")!
+
+        let (data, _) = try await URLSession.shared.data(from: apiURL)
+
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let images = json?["images"] as? [[String: Any]],
-              let urlPath = images.first?["url"] as? String else { return nil }
-        return URL(string: "https://www.bing.com\(urlPath)")
+        guard
+            let images = json?["images"] as? [[String: Any]],
+            let urlBase = images.first?["urlbase"] as? String
+        else {
+            return nil
+        }
+
+        return URL(string: "https://www.bing.com\(urlBase)_UHD.jpg")
     }
 }
 

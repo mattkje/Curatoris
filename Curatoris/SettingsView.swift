@@ -124,7 +124,7 @@ final class SettingsModel: ObservableObject {
         self.refreshTime              = UserDefaults.standard.string(forKey: "refreshTime") ?? "08:00"
         self.everyHourEnabled         = UserDefaults.standard.bool(forKey: "everyHourEnabled")
         self.manualRefreshTimeEnabled = UserDefaults.standard.bool(forKey: "manualRefreshTimeEnabled")
-        self.imageSource              = UserDefaults.standard.string(forKey: "imageSource") ?? "Bing (Only 1080p)"
+        self.imageSource              = UserDefaults.standard.string(forKey: "imageSource") ?? "Bing"
         self.openAtLogin              = UserDefaults.standard.bool(forKey: "openAtLogin")
         self.refreshOnWake            = UserDefaults.standard.bool(forKey: "refreshOnWake")
         self.notifyOnUpdate           = UserDefaults.standard.bool(forKey: "notifyOnUpdate")
@@ -458,11 +458,11 @@ public struct SettingsView: View {
     private let hours       = Array(0..<24)
     private let fillModes   = ["Fill", "Fit", "Stretch", "Center", "Tile"]
     private let historyLimits = [10, 20, 50, 100]
-    private let builtInSources = ["Curatoris", "Bing (Only 1080p)", "Picsum", "Pexels"]
+    private let builtInSources = ["Curatoris", "Bing", "Picsum", "Pexels"]
 
     private var hourlySupportedForCurrentSource: Bool {
         let src = model.imageSource
-        return !(src == "Curatoris" || src == "Bing (Only 1080p)")
+        return !(src == "Curatoris" || src == "Bing")
     }
 
     public init() {}
