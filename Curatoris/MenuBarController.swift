@@ -122,12 +122,10 @@ class MenuBarController: NSObject, ObservableObject {
         if isChainNavigationSourceSelected() {
             menu.addItem(.separator())
 
-            if isCuratorisSourceSelected() {
-                let galleryItem = NSMenuItem(title: "Gallery (Beta)", action: #selector(openGallery), keyEquivalent: "")
-                galleryItem.target = self
-                galleryItem.image = NSImage(systemSymbolName: "photo.fill", accessibilityDescription: nil)
-                menu.addItem(galleryItem)
-            }
+            let galleryItem = NSMenuItem(title: "Gallery", action: #selector(openGallery), keyEquivalent: "")
+            galleryItem.target = self
+            galleryItem.image = NSImage(systemSymbolName: "photo.fill", accessibilityDescription: nil)
+            menu.addItem(galleryItem)
 
             let previousItem = NSMenuItem(title: "Previous", action: #selector(previous(_:)), keyEquivalent: "")
             previousItem.target = self
@@ -247,13 +245,26 @@ class MenuBarController: NSObject, ObservableObject {
                 if isBingSourceSelected() {
                     let daysDiff = Calendar.current.dateComponents([.day], from: date, to: today()).day ?? 0
                     let idx = max(0, daysDiff)
-                    imageURL = try await BingSource().fetchImageURL(idx: idx)
+                    do {
+                        imageURL = try await BingSource().fetchImageURL(idx: idx)
+                    } catch {
+                        NSLog("Bing fetch error: \(error)")
+                        imageURL = nil
+                    }
                 } else {
                     let source = CuratorisSource()
                     let dateString = formattedChainDate()
-                    imageURL = try await source.fetchImageURL(for: dateString)
+                    do {
+                        imageURL = try await source.fetchImageURL(for: dateString)
+                    } catch {
+                        NSLog("Curatoris fetch error: \(error)")
+                        imageURL = nil
+                    }
                 }
-                guard let imageURL else { return }
+                guard let imageURL else {
+                    NSLog("No image URL retrieved")
+                    return
+                }
                 let localPath = try await wallpaperManager.downloadImage(from: imageURL)
                 let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
                 try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
@@ -263,7 +274,7 @@ class MenuBarController: NSObject, ObservableObject {
                 saveWallpaperToFolder(at: localPath)
                 sendUpdateNotificationIfEnabled()
             } catch {
-                // Optionally log error in production
+                NSLog("setWallpaperForChainDate error: \(error)")
             }
         }
     }
@@ -559,6 +570,7 @@ struct BingSource: WallpaperSource {
             return nil
         }
 
+        // Use UHD resolution for 4K
         return URL(string: "https://www.bing.com\(urlBase)_UHD.jpg")
     }
 

@@ -7,11 +7,27 @@ struct Wallpaper: Identifiable, Hashable, Decodable {
     let url: String
     let thumb: String
     let title: String
-    let category: String
+    let category: String?
     let description: String?
     let date: String?
     let createdAt: String?
     let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, thumb, title, category, description, date, createdAt, updatedAt
+    }
+
+    init(id: Int, url: String, thumb: String, title: String, category: String? = nil, description: String? = nil, date: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+        self.id = id
+        self.url = url
+        self.thumb = thumb
+        self.title = title
+        self.category = category
+        self.description = description
+        self.date = date
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 struct AlertMessage: Identifiable {
@@ -28,6 +44,8 @@ struct GalleryView: View {
     @State private var errorMessage: String? = nil
     @State private var page: Int = 0
     @State private var hasMore: Bool = true
+    @State private var currentSource: String = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
+    @State private var sourceCheckTimer: Timer? = nil
     private let pageSize = 50
     private let apiBase = "https://curatoris.mattikjellstadli.com/api/curatoris"
     private var apiKey: String? {
@@ -40,57 +58,63 @@ struct GalleryView: View {
     @State private var selectedWallpaper: Wallpaper? = nil
     @State private var wallpaperActionMessage: AlertMessage? = nil
 
+    private var isBingSourceSelected: Bool {
+        currentSource == "Bing"
+    }
+
     var filteredWallpapers: [Wallpaper] {
-        let list = wallpapers.filter { selectedCategory == "All" || $0.category.localizedCaseInsensitiveContains(selectedCategory) }
+        let list = wallpapers.filter { isBingSourceSelected || selectedCategory == "All" || ($0.category ?? "").localizedCaseInsensitiveContains(selectedCategory) }
         if searchText.isEmpty { return list }
         return list.filter { $0.title.localizedCaseInsensitiveContains(searchText) || ($0.description ?? "").localizedCaseInsensitiveContains(searchText) }
     }
 
     public var body: some View {
         NavigationSplitView {
-            // Sidebar: Search + Categories similar to SettingsView
+            // Sidebar: Search + Categories (only for Curatoris)
             VStack(alignment: .leading, spacing: 8) {
                 SearchBar(text: $searchText)
                     .padding([.top, .horizontal])
 
                 Divider().padding(.horizontal)
 
-                Text("Categories")
-                    .font(.headline)
-                    .padding(.horizontal)
+                if !isBingSourceSelected {
+                    Text("Categories")
+                        .font(.headline)
+                        .padding(.horizontal)
 
-                List {
-                    ForEach(categories, id: \.self) { cat in
-                        Button(action: {
-                            if selectedCategory != cat {
-                                selectedCategory = cat
-                                reloadWallpapers()
-                            }
-                        }) {
-                            ZStack {
-                                if selectedCategory == cat {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.accentColor.opacity(0.15))
-                                } else {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.accentColor.opacity(0.001))
+                    List {
+                        ForEach(categories, id: \.self) { cat in
+                            Button(action: {
+                                if selectedCategory != cat {
+                                    selectedCategory = cat
+                                    reloadWallpapers()
                                 }
-                                HStack {
-                                    Text(cat.capitalized)
-                                        .foregroundColor(selectedCategory == cat ? .accentColor : .primary)
-                                    Spacer()
+                            }) {
+                                ZStack {
+                                    if selectedCategory == cat {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color.accentColor.opacity(0.15))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color.accentColor.opacity(0.001))
+                                    }
+                                    HStack {
+                                        Text(cat.capitalized)
+                                            .foregroundColor(selectedCategory == cat ? .accentColor : .primary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 8)
                                 }
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 8)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .buttonStyle(PlainButtonStyle())
+                            .contentShape(Rectangle())
+                            .listRowInsets(EdgeInsets())
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .buttonStyle(PlainButtonStyle())
-                        .contentShape(Rectangle())
-                        .listRowInsets(EdgeInsets())
                     }
+                    .listStyle(SidebarListStyle())
                 }
-                .listStyle(SidebarListStyle())
             }
             .frame(minWidth: 220)
         } detail: {
@@ -155,6 +179,12 @@ struct GalleryView: View {
             .navigationTitle("Gallery")
         }
         .onAppear(perform: initialLoad)
+        .onAppear {
+            startSourceMonitoring()
+        }
+        .onDisappear {
+            stopSourceMonitoring()
+        }
         .sheet(isPresented: $showSetWallpaperSheet) {
             if let wallpaper = selectedWallpaper {
                 SetWallpaperSheet(wallpaper: wallpaper, onSet: { url in
@@ -171,8 +201,27 @@ struct GalleryView: View {
     }
 
     private func initialLoad() {
-        //fetchCategories()
+        let latestSource = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
+        if currentSource != latestSource {
+            currentSource = latestSource
+        }
         reloadWallpapers()
+    }
+
+    private func startSourceMonitoring() {
+        sourceCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            let latestSource = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
+            if currentSource != latestSource {
+                NSLog("Gallery detected source change from \(currentSource) to \(latestSource)")
+                currentSource = latestSource
+                reloadWallpapers()
+            }
+        }
+    }
+
+    private func stopSourceMonitoring() {
+        sourceCheckTimer?.invalidate()
+        sourceCheckTimer = nil
     }
 
     private func reloadWallpapers() {
@@ -182,40 +231,90 @@ struct GalleryView: View {
         loadWallpapers(append: false)
     }
 
-    private func fetchCategories() {
-        guard let apiKey = apiKey else { errorMessage = "Missing API key"; isLoading = false; return }
-        isLoading = true
-        errorMessage = nil
-        let urlString = "\(apiBase)/categories"
-        guard let url = URL(string: urlString) else { isLoading = false; return }
-        var req = URLRequest(url: url)
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { data, response, error in
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                DispatchQueue.main.async { errorMessage = "Failed to fetch categories: Unauthorized or server error" }
-                isLoading = false
-                return
-            }
-            if let data = data, let cats = try? JSONDecoder().decode([String].self, from: data) {
-                DispatchQueue.main.async {
-                    categories = ["All"] + cats
-                }
-            }
-        }.resume()
-    }
-
-    private func normalizedCategory(_ category: String) -> String {
-        let match = predefinedCategories.first {
-            $0.lowercased() == category.lowercased()
-        }
-        return match ?? "Other"
-    }
-
     private func loadWallpapers(append: Bool) {
-        guard let apiKey = apiKey else { errorMessage = "Missing API key"; isLoading = false; return }
         isLoading = true
         errorMessage = nil
-        // Use the working endpoint and auth pattern
+
+        if isBingSourceSelected {
+            loadBingWallpapers(append: append)
+        } else {
+            loadCuratorisWallpapers(append: append)
+        }
+    }
+
+    private func loadBingWallpapers(append: Bool) {
+        Task {
+            do {
+                // Fetch multiple images with n=8
+                guard let url = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8") else {
+                    DispatchQueue.main.async { isLoading = false; errorMessage = "Invalid Bing API URL" }
+                    return
+                }
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    DispatchQueue.main.async { isLoading = false; errorMessage = "Failed to fetch from Bing" }
+                    return
+                }
+
+                // Parse Bing response
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    DispatchQueue.main.async { isLoading = false; errorMessage = "Failed to parse Bing JSON" }
+                    return
+                }
+
+                guard let images = json["images"] as? [[String: Any]] else {
+                    DispatchQueue.main.async { isLoading = false; errorMessage = "Bing response missing images array" }
+                    return
+                }
+
+                var wallpapers: [Wallpaper] = []
+                for (index, img) in images.enumerated() {
+                    guard let urlBase = img["urlbase"] as? String else {
+                        NSLog("Skipping image at index \(index): missing urlbase")
+                        continue
+                    }
+
+                    // Use UHD resolution for full-resolution (4K)
+                    let fullURL = "https://www.bing.com\(urlBase)_UHD.jpg"
+                    // For thumbnail, construct with smaller resolution
+                    let thumbURL = "https://www.bing.com\(urlBase)_640x360.jpg"
+                    let title = (img["copyright"] as? String) ?? "Bing Image"
+                    let date = (img["startdate"] as? String) ?? ""
+
+                    // Use startdate as unique id, fallback to index if not available
+                    let uniqueId: Int
+                    if let startdate = img["startdate"] as? String, let idFromDate = Int(startdate) {
+                        uniqueId = idFromDate
+                    } else {
+                        uniqueId = index
+                    }
+
+                    let wallpaper = Wallpaper(
+                        id: uniqueId,
+                        url: fullURL,
+                        thumb: thumbURL,
+                        title: title,
+                        category: nil,
+                        description: img["copyrightlink"] as? String,
+                        date: date
+                    )
+                    wallpapers.append(wallpaper)
+                }
+
+                DispatchQueue.main.async {
+                    self.wallpapers = wallpapers
+                    self.hasMore = false
+                    self.isLoading = false
+                }
+            } catch {
+                NSLog("loadBingWallpapers error: \(error)")
+                DispatchQueue.main.async { isLoading = false; errorMessage = "Failed to load Bing wallpapers: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func loadCuratorisWallpapers(append: Bool) {
+        guard let apiKey = apiKey else { errorMessage = "Missing API key"; isLoading = false; return }
         let urlString = "\(apiBase)/all"
         guard let url = URL(string: urlString) else { isLoading = false; return }
         var req = URLRequest(url: url)
@@ -242,18 +341,17 @@ struct GalleryView: View {
                             url: wp.url,
                             thumb: wp.thumb,
                             title: wp.title,
-                            category: normalizedCategory(wp.category),
+                            category: normalizedCategory(wp.category ?? ""),
                             description: wp.description,
                             date: wp.date,
                             createdAt: wp.createdAt,
                             updatedAt: wp.updatedAt
                         )
                     }
-
                     if append {
-                        wallpapers += normalized
+                        self.wallpapers += normalized
                     } else {
-                        wallpapers = normalized
+                        self.wallpapers = normalized
                     }
 
                     hasMore = false
@@ -264,6 +362,13 @@ struct GalleryView: View {
                 }
             }
         }.resume()
+    }
+
+    private func normalizedCategory(_ category: String) -> String {
+        let match = predefinedCategories.first {
+            $0.lowercased() == category.lowercased()
+        }
+        return match ?? "Other"
     }
 
     private func setWallpaper(from urlString: String) {
@@ -350,10 +455,12 @@ struct WallpaperCard: View {
                         .font(.caption)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(wallpaper.category)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    if let category = wallpaper.category {
+                        Text(category)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                     if let date = wallpaper.date {
                         Text(date)
                             .font(.caption2)
