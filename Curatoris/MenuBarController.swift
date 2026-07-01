@@ -39,7 +39,7 @@ class MenuBarController: NSObject, ObservableObject {
     @Published var imageSourceSelection: String {
         didSet {
             UserDefaults.standard.set(imageSourceSelection, forKey: "imageSource")
-            if imageSourceSelection == BuiltInSource.curatoris.rawValue {
+            if isChainNavigationSourceSelected() {
                 curatorisChainDate = today()
             } else {
                 curatorisChainDate = nil
@@ -79,7 +79,7 @@ class MenuBarController: NSObject, ObservableObject {
         self.imageSourceSelection = UserDefaults.standard.string(forKey: "imageSource") ?? BuiltInSource.curatoris.rawValue
         self.curatorisChainDate   = nil
         super.init()
-        if self.imageSourceSelection == BuiltInSource.curatoris.rawValue {
+        if self.isChainNavigationSourceSelected() {
             self.curatorisChainDate = today()
         }
         DispatchQueue.main.async {
@@ -118,19 +118,16 @@ class MenuBarController: NSObject, ObservableObject {
         autoItem.target = self
         menu.addItem(autoItem)
 
-        // Only show previous/next if Curatoris is selected
-        if isCuratorisSourceSelected() {
+        // Show previous/next for Curatoris or Bing
+        if isChainNavigationSourceSelected() {
             menu.addItem(.separator())
 
-            let cuatorisLabel = NSMenuItem(title: "Curatoris Source Features", action: nil, keyEquivalent: "")
-            cuatorisLabel.isEnabled = false
-            cuatorisLabel.image = NSImage(named: "MenuBarIcon")
-            menu.addItem(cuatorisLabel)
-
-            let galleryItem = NSMenuItem(title: "Gallery (Beta)", action: #selector(openGallery), keyEquivalent: "")
-            galleryItem.target = self
-            galleryItem.image = NSImage(systemSymbolName: "photo.fill", accessibilityDescription: nil)
-            menu.addItem(galleryItem)
+            if isCuratorisSourceSelected() {
+                let galleryItem = NSMenuItem(title: "Gallery (Beta)", action: #selector(openGallery), keyEquivalent: "")
+                galleryItem.target = self
+                galleryItem.image = NSImage(systemSymbolName: "photo.fill", accessibilityDescription: nil)
+                menu.addItem(galleryItem)
+            }
 
             let previousItem = NSMenuItem(title: "Previous", action: #selector(previous(_:)), keyEquivalent: "")
             previousItem.target = self
@@ -197,9 +194,9 @@ class MenuBarController: NSObject, ObservableObject {
     @objc private func checkForUpdatesTapped() { checkForUpdates(silentIfUpToDate: false) }
 
     @objc func setWallpaper(_ sender: AnyObject?) {
-        if isCuratorisSourceSelected() {
+        if isChainNavigationSourceSelected() {
             resetCuratorisChainToToday()
-            setWallpaperForCuratorisChainDate()
+            setWallpaperForChainDate()
         } else {
             setWallpaper()
         }
@@ -242,19 +239,27 @@ class MenuBarController: NSObject, ObservableObject {
     }
 
     // --- CLEANUP: Remove debug logs from Curatoris navigation and API ---
-    private func setWallpaperForCuratorisChainDate() {
+    private func setWallpaperForChainDate() {
         guard let date = curatorisChainDate else { return }
         Task { @MainActor in
             do {
-                let source = CuratorisSource()
-                let dateString = formattedChainDate()
-                let imageURL = try await source.fetchImageURL(for: dateString)
+                let imageURL: URL?
+                if isBingSourceSelected() {
+                    let daysDiff = Calendar.current.dateComponents([.day], from: date, to: today()).day ?? 0
+                    let idx = max(0, daysDiff)
+                    imageURL = try await BingSource().fetchImageURL(idx: idx)
+                } else {
+                    let source = CuratorisSource()
+                    let dateString = formattedChainDate()
+                    imageURL = try await source.fetchImageURL(for: dateString)
+                }
                 guard let imageURL else { return }
                 let localPath = try await wallpaperManager.downloadImage(from: imageURL)
                 let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
                 try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
                 self.lastUpdateTime = date
-                appendHistory(imageURL: imageURL.absoluteString, source: BuiltInSource.curatoris.rawValue)
+                let source = isBingSourceSelected() ? BuiltInSource.bing.rawValue : BuiltInSource.curatoris.rawValue
+                appendHistory(imageURL: imageURL.absoluteString, source: source)
                 saveWallpaperToFolder(at: localPath)
                 sendUpdateNotificationIfEnabled()
             } catch {
@@ -264,20 +269,20 @@ class MenuBarController: NSObject, ObservableObject {
     }
 
     @objc func previous(_ sender: AnyObject?) {
-        guard isCuratorisSourceSelected(), let chainDate = curatorisChainDate else { return }
+        guard isChainNavigationSourceSelected(), let chainDate = curatorisChainDate else { return }
         let prev = Calendar.current.date(byAdding: .day, value: -1, to: chainDate)!
         curatorisChainDate = prev
         autoRefreshEnabled = false
-        setWallpaperForCuratorisChainDate()
+        setWallpaperForChainDate()
     }
 
     @objc func next(_ sender: AnyObject?) {
-        guard isCuratorisSourceSelected(), let chainDate = curatorisChainDate else { return }
+        guard isChainNavigationSourceSelected(), let chainDate = curatorisChainDate else { return }
         let today = self.today()
         let next = Calendar.current.date(byAdding: .day, value: 1, to: chainDate)!
         if Calendar.current.compare(next, to: today, toGranularity: .day) != .orderedDescending {
             curatorisChainDate = next
-            setWallpaperForCuratorisChainDate()
+            setWallpaperForChainDate()
         }
     }
 
@@ -492,6 +497,14 @@ class MenuBarController: NSObject, ObservableObject {
         imageSourceSelection == BuiltInSource.curatoris.rawValue
     }
 
+    private func isBingSourceSelected() -> Bool {
+        imageSourceSelection == BuiltInSource.bing.rawValue
+    }
+
+    private func isChainNavigationSourceSelected() -> Bool {
+        isCuratorisSourceSelected() || isBingSourceSelected()
+    }
+
     private func today() -> Date {
         Calendar.current.startOfDay(for: Date())
     }
@@ -532,8 +545,9 @@ struct WallpaperSourceProvider {
 }
 
 struct BingSource: WallpaperSource {
-    func fetchImageURL() async throws -> URL? {
-        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1")!
+    func fetchImageURL(idx: Int = 0) async throws -> URL? {
+        let safeIdx = max(0, idx)
+        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=\(safeIdx)&n=1")!
 
         let (data, _) = try await URLSession.shared.data(from: apiURL)
 
@@ -546,6 +560,10 @@ struct BingSource: WallpaperSource {
         }
 
         return URL(string: "https://www.bing.com\(urlBase)_UHD.jpg")
+    }
+
+    func fetchImageURL() async throws -> URL? {
+        return try await fetchImageURL(idx: 0)
     }
 }
 

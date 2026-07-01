@@ -1,9 +1,13 @@
 {
+  "features" : [
+    "refractivity"
+  ],
   "fill" : {
     "automatic-gradient" : "srgb:0.02151,0.57811,0.50000,1.00000"
   },
   "groups" : [
     {
+      "blur-material" : null,
       "layers" : [
         {
           "blend-mode-specializations" : [
@@ -33,6 +37,12 @@
           }
         }
       ],
+      "lighting" : "individual",
+      "refractivity" : {
+        "depth" : 0.0916796875,
+        "enabled" : true,
+        "strength" : 0.5225390625
+      },
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5

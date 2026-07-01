@@ -736,21 +736,6 @@ public struct SettingsView: View {
     private var apisPane: some View {
         Form {
             Section {
-                HStack(spacing: 10) {
-                    Image(systemName: "flask.fill")
-                        .foregroundColor(.orange)
-                        .font(.title2)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("This feature is in Beta")
-                            .font(.headline)
-                        Text("Custom API support is experimental and the expected response format may change in future versions.")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section {
                 HStack(spacing: 8) {
                     Image(systemName: "tag")
                         .foregroundColor(.secondary)
@@ -813,13 +798,6 @@ public struct SettingsView: View {
             } header: {
                 HStack {
                     Label("Custom API Sources", systemImage: "link.badge.plus")
-                    Spacer()
-                    Text("BETA")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.orange, in: Capsule())
                 }
             } footer: {
                 Text("Enter a URL and an optional display name. The name appears in the source dropdown. Attach an API key if required — stored in Keychain, sent as a Bearer token. Tap ℹ︎ for the expected response format.")
