@@ -60,6 +60,8 @@ class MenuBarController: NSObject, ObservableObject {
     private let wallpaperManager = WallpaperManager()
     private let sourceProvider   = WallpaperSourceProvider()
     private var defaultsObservers: [NSKeyValueObservation] = []
+    private var bingCreditText: String = ""
+    private var lastBingCreditIndex: Int?
 
     private var refreshOnWake: Bool       { UserDefaults.standard.bool(forKey: "refreshOnWake") }
     private var notifyOnUpdate: Bool      { UserDefaults.standard.bool(forKey: "notifyOnUpdate") }
@@ -103,6 +105,7 @@ class MenuBarController: NSObject, ObservableObject {
 
     private func updateMenuBar() {
         guard let statusItem = self.statusItem else { return }
+        refreshBingCreditLabelIfNeeded()
         let menu = NSMenu()
 
         let setItem = NSMenuItem(title: "Set Wallpaper Now", action: #selector(setWallpaper(_:)), keyEquivalent: "w")
@@ -149,6 +152,14 @@ class MenuBarController: NSObject, ObservableObject {
 
         menu.addItem(.separator())
 
+        if isBingSourceSelected() {
+            let creditItem = NSMenuItem(title: bingCreditLabel, action: #selector(showBingCredit(_:)), keyEquivalent: "")
+            creditItem.target = self
+            creditItem.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
+            creditItem.toolTip = bingCreditTooltip
+            menu.addItem(creditItem)
+        }
+
         let lastItem = NSMenuItem(title: lastUpdateLabel, action: nil, keyEquivalent: "")
         lastItem.isEnabled = false
         menu.addItem(lastItem)
@@ -182,6 +193,67 @@ class MenuBarController: NSObject, ObservableObject {
         guard let last = lastUpdateTime else { return "Last Update: Never" }
         let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
         return "Last Update: \(f.string(from: last))"
+    }
+
+    private var bingCreditLabel: String {
+        "Bing Attribution…"
+    }
+
+    private var bingCreditTooltip: String? {
+        bingCreditText.isEmpty ? nil : bingCreditText
+    }
+
+    @objc private func showBingCredit(_ sender: AnyObject?) {
+        let alert = NSAlert()
+        alert.messageText = "Bing Attribution"
+        alert.informativeText = bingCreditText.isEmpty ? "Bing Image" : bingCreditText
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func refreshBingCreditLabelIfNeeded() {
+        guard isBingSourceSelected() else {
+            if !bingCreditText.isEmpty {
+                bingCreditText = ""
+                lastBingCreditIndex = nil
+            }
+            return
+        }
+
+        let idx = currentBingIndex()
+        guard lastBingCreditIndex != idx || bingCreditText.isEmpty else { return }
+        lastBingCreditIndex = idx
+
+        Task { @MainActor in
+            do {
+                let credit = try await fetchBingCreditLabel(idx: idx)
+                let nextText = credit ?? "Bing Image"
+                if bingCreditText != nextText {
+                    bingCreditText = nextText
+                    updateMenuBar()
+                }
+            } catch {
+                if bingCreditText != "Bing Image" {
+                    bingCreditText = "Bing Image"
+                    updateMenuBar()
+                }
+            }
+        }
+    }
+
+    private func currentBingIndex() -> Int {
+        guard isBingSourceSelected(), let date = curatorisChainDate else { return 0 }
+        let daysDiff = Calendar.current.dateComponents([.day], from: date, to: today()).day ?? 0
+        return max(0, daysDiff)
+    }
+
+    private func fetchBingCreditLabel(idx: Int) async throws -> String? {
+        let safeIdx = max(0, idx)
+        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=\(safeIdx)&n=1")!
+        let (data, _) = try await URLSession.shared.data(from: apiURL)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let images = json?["images"] as? [[String: Any]]
+        return images?.first?["copyright"] as? String
     }
 
     @objc private func toggleAutoRefresh()     { autoRefreshEnabled.toggle() }
