@@ -520,7 +520,10 @@ class MenuBarController: NSObject, ObservableObject {
     @objc private func checkForUpdates(silentIfUpToDate: Bool = false) {
         Task { @MainActor in
             guard let apiURL = URL(string: "https://api.github.com/repos/mattkje/Curatoris/releases/latest") else { return }
-            struct Release: Decodable { let tag_name: String; let html_url: String }
+            struct Release: Decodable {
+                let tag_name: String
+                let html_url: String
+            }
 
             func normalize(_ v: String) -> String {
                 var s = v.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -666,7 +669,13 @@ struct CuratorisSource: WallpaperSource {
 
     // Accepts an optional date string in yyyy-MM-dd format
     func fetchImageURL(for date: String? = nil) async throws -> URL? {
-        guard let apiKey = apiKey() else { return nil }
+        guard let apiKey = apiKey() else {
+            NSLog("CuratorisSource: Missing API key")
+            return nil
+        }
+
+        NSLog("CuratorisSource: API Key found: \(apiKey.prefix(10))...")
+
         var comps: URLComponents
         if let date = date {
             comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris/date/\(date)")!
@@ -674,11 +683,54 @@ struct CuratorisSource: WallpaperSource {
             comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris")!
         }
         var request = URLRequest(url: comps.url!)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = false
+
+        NSLog("CuratorisSource: Request URL: \(request.url?.absoluteString ?? "nil")")
+        NSLog("CuratorisSource: Request headers: \(request.allHTTPHeaderFields ?? [:])")
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let str = json["url"] as? String { return URL(string: str) }
+
+        if let http = response as? HTTPURLResponse {
+            NSLog("CuratorisSource: HTTP Status Code: \(http.statusCode)")
+            NSLog("CuratorisSource: Response headers: \(http.allHeaderFields)")
+        }
+
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            NSLog("CuratorisSource: HTTP error \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            if let errorStr = String(data: data, encoding: .utf8) {
+                NSLog("CuratorisSource: Error response: \(errorStr.prefix(500))")
+            }
+            return nil
+        }
+
+        // Log raw response
+        if let rawStr = String(data: data, encoding: .utf8) {
+            NSLog("CuratorisSource: Raw response: \(rawStr.prefix(500))")
+        }
+
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                NSLog("CuratorisSource: Parsed JSON: \(json)")
+                if let str = json["url"] as? String {
+                    NSLog("CuratorisSource: Found URL: \(str)")
+                    return URL(string: str)
+                } else {
+                    NSLog("CuratorisSource: No 'url' field in JSON or not a string")
+                }
+            } else if let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                NSLog("CuratorisSource: Got array response, taking first element")
+                if let first = arr.first, let str = first["url"] as? String {
+                    NSLog("CuratorisSource: Found URL from array: \(str)")
+                    return URL(string: str)
+                }
+            }
+        } catch {
+            NSLog("CuratorisSource: JSON parsing error: \(error)")
+        }
         return nil
     }
 
@@ -729,7 +781,7 @@ struct CustomURLSource: WallpaperSource {
         guard let endpointURL = URL(string: urlString) else { return nil }
         var request = URLRequest(url: endpointURL)
         if let key = KeychainHelper.load(for: urlString), !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue(key, forHTTPHeaderField: "X-Api-Key")
         }
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse,

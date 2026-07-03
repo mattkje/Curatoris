@@ -212,9 +212,9 @@ private struct APIFormatPopover: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("API Key Authentication (optional)", systemImage: "key.fill")
                     .font(.caption).foregroundColor(.secondary)
-                Text("If your endpoint requires a key, it will be sent as a Bearer token:")
+                Text("If your endpoint requires a key, it will be sent as the X-Api-Key header:")
                     .font(.caption2).foregroundColor(.secondary)
-                codeBlock("Authorization: Bearer <your-api-key>")
+                codeBlock("X-Api-Key: <your-api-key>")
             }
             Divider()
             Label("The endpoint must be publicly accessible and return a valid image URL.", systemImage: "exclamationmark.triangle")
@@ -352,7 +352,7 @@ private struct SourceRow: View {
                 .padding(.bottom, 2)
                 .transition(.opacity.combined(with: .move(edge: .top)))
 
-                Text("Stored securely in Keychain. Sent as a Bearer token with each request.")
+                Text("Stored securely in Keychain. Sent as the X-Api-Key header with each request.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 4)
@@ -800,7 +800,7 @@ public struct SettingsView: View {
                     Label("Custom API Sources", systemImage: "link.badge.plus")
                 }
             } footer: {
-                Text("Enter a URL and an optional display name. The name appears in the source dropdown. Attach an API key if required — stored in Keychain, sent as a Bearer token. Tap ℹ︎ for the expected response format.")
+                Text("Enter a URL and an optional display name. The name appears in the source dropdown. Attach an API key if required — stored in Keychain, sent as the X-Api-Key header. Tap ℹ︎ for the expected response format.")
                     .font(.caption)
             }
 

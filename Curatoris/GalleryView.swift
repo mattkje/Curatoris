@@ -236,10 +236,95 @@ struct GalleryView: View {
         errorMessage = nil
 
         if isBingSourceSelected {
-            loadBingWallpapers(append: append)
+            // Try to load from API first, fallback to direct Bing API if not available
+            loadBingWallpapersFromAPI(append: append)
         } else {
             loadCuratorisWallpapers(append: append)
         }
+    }
+
+    private func loadBingWallpapersFromAPI(append: Bool) {
+        guard let apiKey = apiKey else {
+            NSLog("GalleryView: Missing API key, falling back to direct Bing API")
+            loadBingWallpapers(append: append)
+            return
+        }
+
+        let urlString = "\(apiBase)/bing/all"
+        guard let url = URL(string: urlString) else {
+            NSLog("GalleryView: Invalid Bing API URL, falling back to direct Bing API")
+            loadBingWallpapers(append: append)
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
+        req.httpShouldHandleCookies = false
+
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let http = response as? HTTPURLResponse {
+                NSLog("GalleryView (Bing API): Response status: \(http.statusCode)")
+                if http.statusCode != 200 {
+                    NSLog("GalleryView (Bing API): Failed with status \(http.statusCode), falling back to direct Bing API")
+                    DispatchQueue.main.async {
+                        self.loadBingWallpapers(append: append)
+                    }
+                    return
+                }
+            }
+
+            guard let data = data else {
+                NSLog("GalleryView (Bing API): No data received, falling back to direct Bing API")
+                DispatchQueue.main.async {
+                    self.loadBingWallpapers(append: append)
+                }
+                return
+            }
+
+            do {
+                // Try to decode as array of Bing wallpapers
+                struct BingResponse: Decodable {
+                    let id: Int
+                    let title: String
+                    let url: String
+                    let thumb: String?
+                    let date: String?
+                }
+
+                let bingWallpapers = try JSONDecoder().decode([BingResponse].self, from: data)
+                NSLog("GalleryView (Bing API): Successfully loaded \(bingWallpapers.count) wallpapers from API")
+
+                let wallpapers = bingWallpapers.map { bing in
+                    Wallpaper(
+                        id: bing.id,
+                        url: bing.url,
+                        thumb: bing.thumb ?? bing.url,
+                        title: bing.title,
+                        category: nil,
+                        description: nil,
+                        date: bing.date
+                    )
+                }
+
+                DispatchQueue.main.async {
+                    if append {
+                        self.wallpapers += wallpapers
+                    } else {
+                        self.wallpapers = wallpapers
+                    }
+                    self.hasMore = false
+                    self.isLoading = false
+                }
+            } catch {
+                NSLog("GalleryView (Bing API): JSON decode failed: \(error), falling back to direct Bing API")
+                DispatchQueue.main.async {
+                    self.loadBingWallpapers(append: append)
+                }
+            }
+        }.resume()
     }
 
     private func loadBingWallpapers(append: Bool) {
@@ -318,8 +403,22 @@ struct GalleryView: View {
         let urlString = "\(apiBase)/all"
         guard let url = URL(string: urlString) else { isLoading = false; return }
         var req = URLRequest(url: url)
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
+        req.httpShouldHandleCookies = false
         URLSession.shared.dataTask(with: req) { data, response, error in
+            if let http = response as? HTTPURLResponse {
+                NSLog("GalleryView: Response status: \(http.statusCode)")
+                NSLog("GalleryView: Request URL: \(req.url?.absoluteString ?? "nil")")
+                NSLog("GalleryView: Request headers: \(req.allHTTPHeaderFields ?? [:])")
+                if http.statusCode != 200, let data = data {
+                    if let errorStr = String(data: data, encoding: .utf8) {
+                        NSLog("GalleryView: Error response: \(errorStr.prefix(500))")
+                    }
+                }
+            }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 DispatchQueue.main.async { isLoading = false; errorMessage = "Failed to fetch wallpapers: Unauthorized or server error" }
                 return
@@ -328,14 +427,33 @@ struct GalleryView: View {
                 isLoading = false
                 if let error = error {
                     errorMessage = error.localizedDescription
+                    NSLog("GalleryView: Network error: \(error.localizedDescription)")
                     return
                 }
                 guard let data = data else {
                     errorMessage = "No data from server"
+                    NSLog("GalleryView: No data from server")
                     return
                 }
-                if let arr = try? JSONDecoder().decode([Wallpaper].self, from: data) {
-                    let normalized = arr.map { wp in
+
+                // Log raw data for debugging
+                if let raw = String(data: data, encoding: .utf8) {
+                    NSLog("GalleryView: Raw response data:\n\(raw.prefix(1000))")
+                }
+
+                do {
+                    // Try to decode as array first (for backward compatibility)
+                    var wallpaperArray: [Wallpaper] = []
+
+                    do {
+                        wallpaperArray = try JSONDecoder().decode([Wallpaper].self, from: data)
+                    } catch {
+                        // If array decoding fails, try single object
+                        let singleWallpaper = try JSONDecoder().decode(Wallpaper.self, from: data)
+                        wallpaperArray = [singleWallpaper]
+                    }
+
+                    let normalized = wallpaperArray.map { wp in
                         Wallpaper(
                             id: wp.id,
                             url: wp.url,
@@ -353,12 +471,15 @@ struct GalleryView: View {
                     } else {
                         self.wallpapers = normalized
                     }
-
+                    NSLog("GalleryView: Successfully loaded \(normalized.count) wallpapers")
                     hasMore = false
-                } else if let raw = String(data: data, encoding: .utf8) {
-                    errorMessage = "Failed to decode wallpapers: Unexpected format\n" + raw
-                } else {
-                    errorMessage = "Failed to decode wallpapers: Unexpected format (not UTF-8)"
+                } catch {
+                    NSLog("GalleryView: JSON decode error: \(error)")
+                    if let raw = String(data: data, encoding: .utf8) {
+                        errorMessage = "Failed to decode wallpapers: \(error)\n\(raw.prefix(500))"
+                    } else {
+                        errorMessage = "Failed to decode wallpapers: \(error)"
+                    }
                 }
             }
         }.resume()
