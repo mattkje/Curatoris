@@ -11,6 +11,28 @@ class MenuBarController: NSObject, ObservableObject {
         case bing      = "Bing"
         case picsum    = "Picsum"
         case pexels    = "Pexels"
+
+        /// Sources that need an API key are hidden when the app was built without one.
+        var isAvailable: Bool {
+            switch self {
+            case .curatoris: return CuratorisAPI.apiKey != nil
+            case .pexels:    return PexelsSource.apiKey != nil
+            case .bing, .picsum: return true // Bing falls back to bing.com without the Curatoris key
+            }
+        }
+
+        static var available: [BuiltInSource] { allCases.filter(\.isAvailable) }
+
+        static var defaultSource: BuiltInSource { curatoris.isAvailable ? .curatoris : .bing }
+
+        /// Replaces a stored built-in source whose key is missing with the default; custom URLs pass through.
+        static func sanitized(_ selection: String?) -> String {
+            guard let selection else { return defaultSource.rawValue }
+            if let source = BuiltInSource(rawValue: selection), !source.isAvailable {
+                return defaultSource.rawValue
+            }
+            return selection
+        }
     }
 
     @Published var autoRefreshEnabled: Bool {
@@ -83,7 +105,10 @@ class MenuBarController: NSObject, ObservableObject {
         self.refreshTime          = UserDefaults.standard.string(forKey: "refreshTime") ?? "08:00"
         self.lastUpdateTime       = UserDefaults.standard.object(forKey: "lastUpdateTime") as? Date
         self.everyHourEnabled     = UserDefaults.standard.bool(forKey: "everyHourEnabled")
-        self.imageSourceSelection = UserDefaults.standard.string(forKey: "imageSource") ?? BuiltInSource.curatoris.rawValue
+        let storedSource          = UserDefaults.standard.string(forKey: "imageSource")
+        let source                = BuiltInSource.sanitized(storedSource)
+        if storedSource != source { UserDefaults.standard.set(source, forKey: "imageSource") }
+        self.imageSourceSelection = source
         self.curatorisChainDate   = nil
         super.init()
         if self.isChainNavigationSourceSelected() {
@@ -300,8 +325,7 @@ class MenuBarController: NSObject, ObservableObject {
         guard !isInExcludedHours() else { return }
         Task { @MainActor in
             do {
-                let currentSource = UserDefaults.standard.string(forKey: "imageSource")
-                    ?? BuiltInSource.curatoris.rawValue
+                let currentSource = BuiltInSource.sanitized(UserDefaults.standard.string(forKey: "imageSource"))
                 let source = sourceProvider.source(forSelectionKey: currentSource)
                 let imageURL: URL?
                 let usedDate = overrideDate
@@ -665,14 +689,21 @@ struct WallpaperSourceProvider {
     }
 }
 
+/// Reads an API key from the environment, else from Info.plist (filled from Config.xcconfig at build time).
+func bundledAPIKey(environment: String, infoKey: String) -> String? {
+    if let env = ProcessInfo.processInfo.environment[environment], !env.isEmpty { return env }
+    guard let plist = Bundle.main.object(forInfoDictionaryKey: infoKey) as? String else { return nil }
+    let key = plist.trimmingCharacters(in: .whitespacesAndNewlines)
+    // An unset build setting leaves the value empty, or the literal "$(NAME)" if it was not expanded
+    return key.isEmpty || key.hasPrefix("$(") ? nil : key
+}
+
 /// Shared access to the self-hosted Curatoris API.
 enum CuratorisAPI {
     static let baseURL = "https://curatoris.mattikjellstadli.com/api/curatoris"
 
     static var apiKey: String? {
-        if let env = ProcessInfo.processInfo.environment["CURATORIS_API_KEY"], !env.isEmpty { return env }
-        if let plist = Bundle.main.object(forInfoDictionaryKey: "CuratorisAPIKey") as? String, !plist.isEmpty { return plist }
-        return nil
+        bundledAPIKey(environment: "CURATORIS_API_KEY", infoKey: "CuratorisAPIKey")
     }
 
     /// An authenticated GET request for a path under the API base, or nil when no key is configured.
@@ -843,14 +874,12 @@ struct CuratorisSource: WallpaperSource {
 }
 
 struct PexelsSource: WallpaperSource {
-    private func apiKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["PEXELS_API_KEY"], !env.isEmpty { return env }
-        if let plist = Bundle.main.object(forInfoDictionaryKey: "PexelsAPIKey") as? String, !plist.isEmpty { return plist }
-        return nil
+    static var apiKey: String? {
+        bundledAPIKey(environment: "PEXELS_API_KEY", infoKey: "PexelsAPIKey")
     }
 
     func fetchImageURL() async throws -> URL? {
-        guard let apiKey = apiKey() else { return nil }
+        guard let apiKey = Self.apiKey else { return nil }
         let queries = ["landscape nature", "mountains", "ocean", "forest", "minimal landscape",
                        "abstract gradient", "night sky", "desert", "snow landscape"]
         var comps = URLComponents(string: "https://api.pexels.com/v1/search")!

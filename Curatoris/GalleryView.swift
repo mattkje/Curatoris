@@ -44,7 +44,7 @@ struct GalleryView: View {
     @State private var errorMessage: String? = nil
     @State private var page: Int = 0
     @State private var hasMore: Bool = true
-    @AppStorage("imageSource") private var currentSource: String = "Curatoris"
+    @AppStorage("imageSource") private var currentSource: String = MenuBarController.BuiltInSource.defaultSource.rawValue
     @State private var bingDate = Date()
     private let pageSize = 50
 
