@@ -53,7 +53,9 @@ class MenuBarController: NSObject, ObservableObject {
             if autoRefreshEnabled { scheduleRefresh() }
         }
     }
-    @Published var curatorisChainDate: Date? = nil
+    @Published var curatorisChainDate: Date? = nil {
+        didSet { refreshPreviewIfNeeded() }
+    }
 
     private var statusItem: NSStatusItem?
     private var refreshTimer: Timer?
@@ -62,6 +64,10 @@ class MenuBarController: NSObject, ObservableObject {
     private var defaultsObservers: [NSKeyValueObservation] = []
     private var bingCreditText: String = ""
     private var lastBingCreditIndex: Int?
+    private let preview = MenuPreviewModel()
+    private var previewKey: String?
+    private var isMenuOpen = false
+    private var needsMenuRebuild = false
 
     private var refreshOnWake: Bool       { UserDefaults.standard.bool(forKey: "refreshOnWake") }
     private var notifyOnUpdate: Bool      { UserDefaults.standard.bool(forKey: "notifyOnUpdate") }
@@ -100,13 +106,34 @@ class MenuBarController: NSObject, ObservableObject {
         guard let button = item.button else { return }
         button.image = NSImage(named: "MenuBarIcon")
         button.image?.isTemplate = true
+        refreshPreviewIfNeeded()
         updateMenuBar()
     }
 
     private func updateMenuBar() {
         guard let statusItem = self.statusItem else { return }
+        // Swapping the menu while it is open would drop the user out of browsing; rebuild on close instead
+        if isMenuOpen {
+            needsMenuRebuild = true
+            return
+        }
         refreshBingCreditLabelIfNeeded()
         let menu = NSMenu()
+        menu.delegate = self
+
+        // Preview with previous/next arrows for Curatoris or Bing
+        if isChainNavigationSourceSelected() {
+            let previewItem = NSMenuItem()
+            let hostingView = NSHostingView(rootView: MenuPreviewView(
+                model: preview,
+                onPrevious: { [weak self] in self?.previous(nil) },
+                onNext: { [weak self] in self?.next(nil) }
+            ))
+            hostingView.frame = NSRect(origin: .zero, size: hostingView.fittingSize)
+            previewItem.view = hostingView
+            menu.addItem(previewItem)
+            menu.addItem(.separator())
+        }
 
         let setItem = NSMenuItem(title: "Set Wallpaper Now", action: #selector(setWallpaper(_:)), keyEquivalent: "w")
         setItem.target = self
@@ -121,7 +148,6 @@ class MenuBarController: NSObject, ObservableObject {
         autoItem.target = self
         menu.addItem(autoItem)
 
-        // Show previous/next for Curatoris or Bing
         if isChainNavigationSourceSelected() {
             menu.addItem(.separator())
 
@@ -129,25 +155,6 @@ class MenuBarController: NSObject, ObservableObject {
             galleryItem.target = self
             galleryItem.image = NSImage(systemSymbolName: "photo.fill", accessibilityDescription: nil)
             menu.addItem(galleryItem)
-
-            let previousItem = NSMenuItem(title: "Previous", action: #selector(previous(_:)), keyEquivalent: "")
-            previousItem.target = self
-            previousItem.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)
-            previousItem.isEnabled = curatorisChainDate != nil && curatorisChainDate! > Date(timeIntervalSince1970: 0)
-            menu.addItem(previousItem)
-
-            let nextItem = NSMenuItem(title: "Next", action: #selector(next(_:)), keyEquivalent: "")
-            nextItem.target = self
-            let calendar = Calendar.current
-            if let chainDate = curatorisChainDate {
-                let chainDay = calendar.startOfDay(for: chainDate)
-                let todayDay = calendar.startOfDay(for: Date())
-                nextItem.isEnabled = chainDay < todayDay
-            } else {
-                nextItem.isEnabled = false
-            }
-            nextItem.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
-            menu.addItem(nextItem)
         }
 
         menu.addItem(.separator())
@@ -187,6 +194,44 @@ class MenuBarController: NSObject, ObservableObject {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    private func refreshPreviewIfNeeded() {
+        guard isChainNavigationSourceSelected(), let date = curatorisChainDate else {
+            previewKey = nil
+            return
+        }
+        let todayDay = today()
+        preview.canPrevious = date > Date(timeIntervalSince1970: 0)
+        preview.canNext = Calendar.current.startOfDay(for: date) < todayDay
+
+        let dateString = formattedChainDate()
+        let key = "\(imageSourceSelection)|\(dateString ?? "")"
+        guard key != previewKey else { return }
+        previewKey = key
+
+        let isBing = isBingSourceSelected()
+        let bingIdx = currentBingIndex()
+        let fallbackSubtitle = DateFormatter.localizedString(from: date, dateStyle: .long, timeStyle: .none)
+        preview.isLoading = true
+        preview.imageURL = nil
+        preview.title = "Loading…"
+        preview.credit = fallbackSubtitle
+
+        Task { @MainActor in
+            let info: WallpaperPreview?
+            if isBing {
+                info = try? await BingSource().fetchPreview(idx: bingIdx)
+            } else {
+                info = try? await CuratorisSource().fetchPreview(for: dateString)
+            }
+            // A newer navigation may have started while this one was loading
+            guard previewKey == key else { return }
+            preview.isLoading = false
+            preview.imageURL = info?.imageURL
+            preview.title = info?.title ?? "No wallpaper for this day"
+            preview.credit = info?.credit ?? fallbackSubtitle
+        }
     }
 
     private var lastUpdateLabel: String {
@@ -607,6 +652,20 @@ class MenuBarController: NSObject, ObservableObject {
     }
 }
 
+extension MenuBarController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+        if needsMenuRebuild {
+            needsMenuRebuild = false
+            updateMenuBar()
+        }
+    }
+}
+
 extension UserDefaults {
     @objc dynamic var imageSource: String        { string(forKey: "imageSource") ?? "" }
     @objc dynamic var autoRefreshEnabled: Bool   { bool(forKey: "autoRefreshEnabled") }
@@ -652,6 +711,25 @@ struct BingSource: WallpaperSource {
     func fetchImageURL() async throws -> URL? {
         return try await fetchImageURL(idx: 0)
     }
+
+    func fetchPreview(idx: Int) async throws -> WallpaperPreview? {
+        let safeIdx = max(0, idx)
+        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=\(safeIdx)&n=1")!
+        let (data, _) = try await URLSession.shared.data(from: apiURL)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard
+            let image = (json?["images"] as? [[String: Any]])?.first,
+            let urlBase = image["urlbase"] as? String
+        else {
+            return nil
+        }
+        let (title, credit) = WallpaperPreview.splitCopyright(image["copyright"] as? String ?? "Bing Image")
+        return WallpaperPreview(
+            imageURL: URL(string: "https://www.bing.com\(urlBase)_1280x720.jpg"),
+            title: title,
+            credit: credit
+        )
+    }
 }
 
 struct PicsumSource: WallpaperSource {
@@ -669,6 +747,27 @@ struct CuratorisSource: WallpaperSource {
 
     // Accepts an optional date string in yyyy-MM-dd format
     func fetchImageURL(for date: String? = nil) async throws -> URL? {
+        guard let entry = try await fetchEntry(for: date) else { return nil }
+        if let str = entry["url"] as? String {
+            NSLog("CuratorisSource: Found URL: \(str)")
+            return URL(string: str)
+        }
+        NSLog("CuratorisSource: No 'url' field in JSON or not a string")
+        return nil
+    }
+
+    func fetchPreview(for date: String? = nil) async throws -> WallpaperPreview? {
+        guard let entry = try await fetchEntry(for: date) else { return nil }
+        guard let str = (entry["thumb"] as? String) ?? (entry["url"] as? String) else { return nil }
+        return WallpaperPreview(
+            imageURL: URL(string: str),
+            title: entry["title"] as? String ?? "Curatoris",
+            credit: entry["description"] as? String
+        )
+    }
+
+    /// Fetches the raw wallpaper JSON object for a date (or today's when nil).
+    private func fetchEntry(for date: String?) async throws -> [String: Any]? {
         guard let apiKey = apiKey() else {
             NSLog("CuratorisSource: Missing API key")
             return nil
@@ -715,18 +814,10 @@ struct CuratorisSource: WallpaperSource {
         do {
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 NSLog("CuratorisSource: Parsed JSON: \(json)")
-                if let str = json["url"] as? String {
-                    NSLog("CuratorisSource: Found URL: \(str)")
-                    return URL(string: str)
-                } else {
-                    NSLog("CuratorisSource: No 'url' field in JSON or not a string")
-                }
+                return json
             } else if let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                 NSLog("CuratorisSource: Got array response, taking first element")
-                if let first = arr.first, let str = first["url"] as? String {
-                    NSLog("CuratorisSource: Found URL from array: \(str)")
-                    return URL(string: str)
-                }
+                return arr.first
             }
         } catch {
             NSLog("CuratorisSource: JSON parsing error: \(error)")
@@ -804,5 +895,99 @@ struct CustomURLSource: WallpaperSource {
         if let dict = json as? [String: Any]                        { return urlFrom(dict) }
         if let arr  = json as? [[String: Any]], let first = arr.first { return urlFrom(first) }
         return nil
+    }
+}
+
+// MARK: - Menu preview
+
+struct WallpaperPreview {
+    let imageURL: URL?
+    let title: String
+    let credit: String?
+
+    /// Bing copyright strings look like "Tigresses, India (© Photographer/Agency)"; split off the credit.
+    static func splitCopyright(_ copyright: String) -> (String, String?) {
+        guard let range = copyright.range(of: " (©"), copyright.hasSuffix(")") else { return (copyright, nil) }
+        let credit = copyright[range.upperBound...].dropLast().trimmingCharacters(in: .whitespaces)
+        return (String(copyright[..<range.lowerBound]), "© " + credit)
+    }
+}
+
+@MainActor
+final class MenuPreviewModel: ObservableObject {
+    @Published var imageURL: URL?
+    @Published var title: String = ""
+    @Published var credit: String?
+    @Published var isLoading = false
+    @Published var canPrevious = false
+    @Published var canNext = false
+}
+
+struct MenuPreviewView: View {
+    @ObservedObject var model: MenuPreviewModel
+    let onPrevious: () -> Void
+    let onNext: () -> Void
+
+    private let imageSize = CGSize(width: 256, height: 144)
+    private let arrowWidth: CGFloat = 26
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                arrow("chevron.left", enabled: model.canPrevious, help: "Previous day", action: onPrevious)
+
+                AsyncImage(url: model.imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        placeholder { Image(systemName: "photo").foregroundStyle(.secondary) }
+                    default:
+                        placeholder {
+                            if model.isLoading || model.imageURL != nil {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "photo").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(width: imageSize.width, height: imageSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                arrow("chevron.right", enabled: model.canNext, help: "Next day", action: onNext)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(2, reservesSpace: true)
+                Text(model.credit ?? " ")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: imageSize.width, alignment: .leading)
+            .padding(.leading, arrowWidth + 4)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+    }
+
+    private func placeholder<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        Color.secondary.opacity(0.12).overlay(content())
+    }
+
+    private func arrow(_ systemName: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 22, weight: .regular))
+                .frame(width: arrowWidth, height: imageSize.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? .primary : .tertiary)
+        .disabled(!enabled)
+        .help(help)
     }
 }
