@@ -10,13 +10,11 @@ class MenuBarController: NSObject, ObservableObject {
         case curatoris = "Curatoris"
         case bing      = "Bing"
         case picsum    = "Picsum"
-        case pexels    = "Pexels"
 
         /// Sources that need an API key are hidden when the app was built without one.
         var isAvailable: Bool {
             switch self {
             case .curatoris: return CuratorisAPI.apiKey != nil
-            case .pexels:    return PexelsSource.apiKey != nil
             case .bing, .picsum: return true // Bing falls back to bing.com without the Curatoris key
             }
         }
@@ -27,7 +25,8 @@ class MenuBarController: NSObject, ObservableObject {
 
         /// Replaces a stored built-in source whose key is missing with the default; custom URLs pass through.
         static func sanitized(_ selection: String?) -> String {
-            guard let selection else { return defaultSource.rawValue }
+            // "Pexels" was a built-in source before 1.10.0
+            guard let selection, selection != "Pexels" else { return defaultSource.rawValue }
             if let source = BuiltInSource(rawValue: selection), !source.isAvailable {
                 return defaultSource.rawValue
             }
@@ -683,7 +682,6 @@ struct WallpaperSourceProvider {
         case .curatoris: return CuratorisSource()
         case .bing:      return BingSource()
         case .picsum:    return PicsumSource()
-        case .pexels:    return PexelsSource()
         case nil:        return CustomURLSource(urlString: key)
         }
     }
@@ -870,39 +868,6 @@ struct CuratorisSource: WallpaperSource {
 
     func fetchImageURL() async throws -> URL? {
         return try await fetchImageURL(for: nil)
-    }
-}
-
-struct PexelsSource: WallpaperSource {
-    static var apiKey: String? {
-        bundledAPIKey(environment: "PEXELS_API_KEY", infoKey: "PexelsAPIKey")
-    }
-
-    func fetchImageURL() async throws -> URL? {
-        guard let apiKey = Self.apiKey else { return nil }
-        let queries = ["landscape nature", "mountains", "ocean", "forest", "minimal landscape",
-                       "abstract gradient", "night sky", "desert", "snow landscape"]
-        var comps = URLComponents(string: "https://api.pexels.com/v1/search")!
-        comps.queryItems = [
-            URLQueryItem(name: "query",       value: queries.randomElement() ?? "landscape"),
-            URLQueryItem(name: "per_page",    value: "40"),
-            URLQueryItem(name: "orientation", value: "landscape"),
-            URLQueryItem(name: "size",        value: "large")
-        ]
-        var request = URLRequest(url: comps.url!)
-        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        guard let json   = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let photos = json["photos"] as? [[String: Any]] else { return nil }
-        let filtered = photos.filter { ($0["people"] as? Int ?? 0) == 0 }
-        guard let photo = (filtered.isEmpty ? photos : filtered).randomElement(),
-              let src = photo["src"] as? [String: Any] else { return nil }
-        if let str = src["original"] as? String, let url = URL(string: str) { return url }
-        for key in ["large2x", "large", "landscape"] {
-            if let str = src[key] as? String, var c = URLComponents(string: str) { c.queryItems = nil; return c.url }
-        }
-        return nil
     }
 }
 

@@ -1,10 +1,10 @@
 # Curatoris
 
-A menu bar app for macOS that automatically updates your desktop wallpaper daily from Curatoris, Bing, Picsum, Pexels, or custom API endpoints.
+A menu bar app for macOS that automatically updates your desktop wallpaper daily from Curatoris, Bing, Picsum, or custom API endpoints.
 
 ## Features
 
-- Multiple wallpaper sources (Curatoris, Bing, Picsum, Pexels, custom API)
+- Multiple wallpaper sources (Curatoris, Bing, Picsum, custom API)
 - Automatic daily or hourly refresh
 - Manual refresh anytime
 - Refresh on wake from sleep
@@ -26,10 +26,6 @@ Download from Releases and drag Curatoris.app to Applications, or build from sou
 ### Curatoris API Key
 
 The Curatoris source requires a private API key. Only the original developer can use this source.
-
-### Pexels API Key (optional)
-
-Get a free API key from pexels.com/api. Set it in Xcode as an environment variable `PEXELS_API_KEY` or in Info.plist under `PexelsAPIKey`.
 
 ## Usage
 
@@ -70,7 +66,6 @@ Click the menu bar icon to access:
 | Curatoris | https://curatoris.mattikjellstadli.com/api/daily-wall |
 | Bing | https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1 |
 | Picsum | https://picsum.photos/3840/2160 |
-| Pexels | https://api.pexels.com/v1/search |
 | Custom | User-supplied endpoint |
 
 ## License
