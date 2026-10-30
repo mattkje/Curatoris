@@ -44,16 +44,9 @@ struct GalleryView: View {
     @State private var errorMessage: String? = nil
     @State private var page: Int = 0
     @State private var hasMore: Bool = true
-    @State private var currentSource: String = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
-    @State private var sourceCheckTimer: Timer? = nil
+    @AppStorage("imageSource") private var currentSource: String = MenuBarController.BuiltInSource.defaultSource.rawValue
     @State private var bingDate = Date()
     private let pageSize = 50
-    private let apiBase = "https://curatoris.mattikjellstadli.com/api/curatoris"
-    private var apiKey: String? {
-        if let env = ProcessInfo.processInfo.environment["CURATORIS_API_KEY"], !env.isEmpty { return env }
-        if let plist = Bundle.main.object(forInfoDictionaryKey: "CuratorisAPIKey") as? String, !plist.isEmpty { return plist }
-        return nil
-    }
 
     @State private var showSetWallpaperSheet = false
     @State private var selectedWallpaper: Wallpaper? = nil
@@ -131,12 +124,10 @@ struct GalleryView: View {
             }
         }
         .navigationTitle("Gallery")
-        .onAppear(perform: initialLoad)
-        .onAppear {
-            startSourceMonitoring()
-        }
-        .onDisappear {
-            stopSourceMonitoring()
+        .onAppear(perform: reloadWallpapers)
+        .onChange(of: currentSource) {
+            NSLog("Gallery detected source change to \(currentSource)")
+            reloadWallpapers()
         }
         .sheet(isPresented: $showSetWallpaperSheet) {
             if let wallpaper = selectedWallpaper {
@@ -300,30 +291,6 @@ struct GalleryView: View {
         return nil
     }
 
-    private func initialLoad() {
-        let latestSource = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
-        if currentSource != latestSource {
-            currentSource = latestSource
-        }
-        reloadWallpapers()
-    }
-
-    private func startSourceMonitoring() {
-        sourceCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            let latestSource = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
-            if currentSource != latestSource {
-                NSLog("Gallery detected source change from \(currentSource) to \(latestSource)")
-                currentSource = latestSource
-                reloadWallpapers()
-            }
-        }
-    }
-
-    private func stopSourceMonitoring() {
-        sourceCheckTimer?.invalidate()
-        sourceCheckTimer = nil
-    }
-
     private func reloadWallpapers() {
         page = 0
         hasMore = true
@@ -344,72 +311,22 @@ struct GalleryView: View {
     }
 
     private func loadBingWallpapersFromAPI(append: Bool) {
-        guard let apiKey = apiKey else {
-            NSLog("GalleryView: Missing API key, falling back to direct Bing API")
-            loadBingWallpapers(append: append)
-            return
-        }
-
-        let urlString = "\(apiBase)/bing/all"
-        guard let url = URL(string: urlString) else {
-            NSLog("GalleryView: Invalid Bing API URL, falling back to direct Bing API")
-            loadBingWallpapers(append: append)
-            return
-        }
-
-        var req = URLRequest(url: url)
-        req.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
-        req.httpShouldHandleCookies = false
-
-        URLSession.shared.dataTask(with: req) { data, response, error in
-            if let http = response as? HTTPURLResponse {
-                NSLog("GalleryView (Bing API): Response status: \(http.statusCode)")
-                if http.statusCode != 200 {
-                    NSLog("GalleryView (Bing API): Failed with status \(http.statusCode), falling back to direct Bing API")
-                    DispatchQueue.main.async {
-                        self.loadBingWallpapers(append: append)
-                    }
-                    return
-                }
-            }
-
-            guard let data = data else {
-                NSLog("GalleryView (Bing API): No data received, falling back to direct Bing API")
-                DispatchQueue.main.async {
-                    self.loadBingWallpapers(append: append)
-                }
-                return
-            }
-
+        Task {
             do {
-                // Try to decode as array of Bing wallpapers
-                struct BingResponse: Decodable {
-                    let id: Int
-                    let title: String
-                    let url: String
-                    let thumb: String?
-                    let date: String?
-                }
-
-                let bingWallpapers = try JSONDecoder().decode([BingResponse].self, from: data)
-                NSLog("GalleryView (Bing API): Successfully loaded \(bingWallpapers.count) wallpapers from API")
-
-                let wallpapers = bingWallpapers.map { bing in
+                let entries = try await BingSource().fetchArchive()
+                NSLog("GalleryView (Bing API): Successfully loaded \(entries.count) wallpapers from API")
+                let wallpapers = entries.map { entry in
                     Wallpaper(
-                        id: bing.id,
-                        url: bing.url,
-                        thumb: bing.thumb ?? bing.url,
-                        title: bing.title,
+                        id: entry.id,
+                        url: entry.url,
+                        thumb: entry.thumb ?? entry.url,
+                        title: entry.title,
                         category: nil,
-                        description: nil,
-                        date: bing.date
+                        description: entry.copyright,
+                        date: entry.date
                     )
                 }
-
-                DispatchQueue.main.async {
+                await MainActor.run {
                     if append {
                         self.wallpapers += wallpapers
                     } else {
@@ -419,12 +336,10 @@ struct GalleryView: View {
                     self.isLoading = false
                 }
             } catch {
-                NSLog("GalleryView (Bing API): JSON decode failed: \(error), falling back to direct Bing API")
-                DispatchQueue.main.async {
-                    self.loadBingWallpapers(append: append)
-                }
+                NSLog("GalleryView (Bing API): \(error.localizedDescription), falling back to direct Bing API")
+                await MainActor.run { self.loadBingWallpapers(append: append) }
             }
-        }.resume()
+        }
     }
 
     private func loadBingWallpapers(append: Bool) {
@@ -499,20 +414,11 @@ struct GalleryView: View {
     }
 
     private func loadCuratorisWallpapers(append: Bool) {
-        guard let apiKey = apiKey else { errorMessage = "Missing API key"; isLoading = false; return }
-        let urlString = "\(apiBase)/all"
-        guard let url = URL(string: urlString) else { isLoading = false; return }
-        var req = URLRequest(url: url)
-        req.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
-        req.httpShouldHandleCookies = false
+        guard let req = CuratorisAPI.request(path: "/all") else { errorMessage = "Missing API key"; isLoading = false; return }
         URLSession.shared.dataTask(with: req) { data, response, error in
             if let http = response as? HTTPURLResponse {
                 NSLog("GalleryView: Response status: \(http.statusCode)")
                 NSLog("GalleryView: Request URL: \(req.url?.absoluteString ?? "nil")")
-                NSLog("GalleryView: Request headers: \(req.allHTTPHeaderFields ?? [:])")
                 if http.statusCode != 200, let data = data {
                     if let errorStr = String(data: data, encoding: .utf8) {
                         NSLog("GalleryView: Error response: \(errorStr.prefix(500))")

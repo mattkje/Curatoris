@@ -13,7 +13,5 @@
 			<dict/>
 		</dict>
 	</array>
-	<key>PexelsAPIKey</key>
-	<string>$(PEXELS_API_KEY)</string>
 </dict>
 </plist>

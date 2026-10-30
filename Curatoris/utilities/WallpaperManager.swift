@@ -25,16 +25,32 @@ public final class WallpaperManager {
         try data.write(to: fileURL, options: .atomic)
         return fileURL.path
     }
-    public func setDesktopWallpaper(to path: String, fillMode: NSImageScaling = .scaleProportionallyUpOrDown) throws {
+    /// The fill mode chosen in Settings ("Fill", "Fit", "Stretch" or "Center").
+    public static var currentFillMode: String {
+        UserDefaults.standard.string(forKey: "wallpaperFillMode") ?? "Fill"
+    }
+
+    /// Maps a Settings fill mode to NSWorkspace scaling + clipping. Fill and Fit share the same
+    /// scaling; only clipping tells them apart (Fill crops to cover, Fit letterboxes).
+    static func desktopImageOptions(for fillMode: String) -> [NSWorkspace.DesktopImageOptionKey: Any] {
+        let scaling: NSImageScaling
+        let allowClipping: Bool
+        switch fillMode.lowercased() {
+        case "fit":     scaling = .scaleProportionallyUpOrDown; allowClipping = false
+        case "stretch": scaling = .scaleAxesIndependently;      allowClipping = false
+        // NSWorkspace has no tiling option, so "Tile" falls back to centering
+        case "center", "tile": scaling = .scaleNone;            allowClipping = false
+        default:        scaling = .scaleProportionallyUpOrDown; allowClipping = true
+        }
+        return [.imageScaling: scaling.rawValue, .allowClipping: allowClipping]
+    }
+
+    public func setDesktopWallpaper(to path: String, fillMode: String = WallpaperManager.currentFillMode) throws {
         if WallpaperManager.shouldUseOsascript() {
             try setWallpaperWithOsascript(to: path)
         } else {
             let url = URL(fileURLWithPath: path)
-            let allowClipping = (fillMode == .scaleProportionallyUpOrDown)
-            let options: [NSWorkspace.DesktopImageOptionKey: Any] = [
-                .imageScaling:   fillMode.rawValue,
-                .allowClipping:  allowClipping
-            ]
+            let options = WallpaperManager.desktopImageOptions(for: fillMode)
             var allSucceeded = true
             for screen in NSScreen.screens {
                 do {

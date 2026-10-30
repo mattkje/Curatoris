@@ -10,7 +10,28 @@ class MenuBarController: NSObject, ObservableObject {
         case curatoris = "Curatoris"
         case bing      = "Bing"
         case picsum    = "Picsum"
-        case pexels    = "Pexels"
+
+        /// Sources that need an API key are hidden when the app was built without one.
+        var isAvailable: Bool {
+            switch self {
+            case .curatoris: return CuratorisAPI.apiKey != nil
+            case .bing, .picsum: return true // Bing falls back to bing.com without the Curatoris key
+            }
+        }
+
+        static var available: [BuiltInSource] { allCases.filter(\.isAvailable) }
+
+        static var defaultSource: BuiltInSource { curatoris.isAvailable ? .curatoris : .bing }
+
+        /// Replaces a stored built-in source whose key is missing with the default; custom URLs pass through.
+        static func sanitized(_ selection: String?) -> String {
+            // "Pexels" was a built-in source before 1.10.0
+            guard let selection, selection != "Pexels" else { return defaultSource.rawValue }
+            if let source = BuiltInSource(rawValue: selection), !source.isAvailable {
+                return defaultSource.rawValue
+            }
+            return selection
+        }
     }
 
     @Published var autoRefreshEnabled: Bool {
@@ -62,8 +83,8 @@ class MenuBarController: NSObject, ObservableObject {
     private let wallpaperManager = WallpaperManager()
     private let sourceProvider   = WallpaperSourceProvider()
     private var defaultsObservers: [NSKeyValueObservation] = []
-    private var bingCreditText: String = ""
-    private var lastBingCreditIndex: Int?
+    private var bingArchive: [BingArchiveEntry] = []
+    private var bingArchiveFetchedAt: Date?
     private let preview = MenuPreviewModel()
     private var previewKey: String?
     private var isMenuOpen = false
@@ -76,7 +97,6 @@ class MenuBarController: NSObject, ObservableObject {
     private var excludeHoursEnabled: Bool { UserDefaults.standard.bool(forKey: "excludeHoursEnabled") }
     private var excludeHourStart: Int     { UserDefaults.standard.object(forKey: "excludeHourStart") as? Int ?? 22 }
     private var excludeHourEnd: Int       { UserDefaults.standard.object(forKey: "excludeHourEnd")   as? Int ?? 7  }
-    private var wallpaperFillMode: String { UserDefaults.standard.string(forKey: "wallpaperFillMode") ?? "Fill" }
     private var historyLimit: Int         { UserDefaults.standard.object(forKey: "historyLimit") as? Int ?? 20 }
 
     override init() {
@@ -84,7 +104,10 @@ class MenuBarController: NSObject, ObservableObject {
         self.refreshTime          = UserDefaults.standard.string(forKey: "refreshTime") ?? "08:00"
         self.lastUpdateTime       = UserDefaults.standard.object(forKey: "lastUpdateTime") as? Date
         self.everyHourEnabled     = UserDefaults.standard.bool(forKey: "everyHourEnabled")
-        self.imageSourceSelection = UserDefaults.standard.string(forKey: "imageSource") ?? BuiltInSource.curatoris.rawValue
+        let storedSource          = UserDefaults.standard.string(forKey: "imageSource")
+        let source                = BuiltInSource.sanitized(storedSource)
+        if storedSource != source { UserDefaults.standard.set(source, forKey: "imageSource") }
+        self.imageSourceSelection = source
         self.curatorisChainDate   = nil
         super.init()
         if self.isChainNavigationSourceSelected() {
@@ -117,7 +140,6 @@ class MenuBarController: NSObject, ObservableObject {
             needsMenuRebuild = true
             return
         }
-        refreshBingCreditLabelIfNeeded()
         let menu = NSMenu()
         menu.delegate = self
 
@@ -159,14 +181,6 @@ class MenuBarController: NSObject, ObservableObject {
 
         menu.addItem(.separator())
 
-        if isBingSourceSelected() {
-            let creditItem = NSMenuItem(title: bingCreditLabel, action: #selector(showBingCredit(_:)), keyEquivalent: "")
-            creditItem.target = self
-            creditItem.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
-            creditItem.toolTip = bingCreditTooltip
-            menu.addItem(creditItem)
-        }
-
         let lastItem = NSMenuItem(title: lastUpdateLabel, action: nil, keyEquivalent: "")
         lastItem.isEnabled = false
         menu.addItem(lastItem)
@@ -201,9 +215,7 @@ class MenuBarController: NSObject, ObservableObject {
             previewKey = nil
             return
         }
-        let todayDay = today()
-        preview.canPrevious = date > Date(timeIntervalSince1970: 0)
-        preview.canNext = Calendar.current.startOfDay(for: date) < todayDay
+        updatePreviewNavigation()
 
         let dateString = formattedChainDate()
         let key = "\(imageSourceSelection)|\(dateString ?? "")"
@@ -221,7 +233,14 @@ class MenuBarController: NSObject, ObservableObject {
         Task { @MainActor in
             let info: WallpaperPreview?
             if isBing {
-                info = try? await BingSource().fetchPreview(idx: bingIdx)
+                if let entry = await bingArchiveEntry(for: dateString) {
+                    let (title, credit) = WallpaperPreview.splitCopyright(entry.copyright ?? entry.title)
+                    info = WallpaperPreview(imageURL: URL(string: entry.thumb ?? entry.url), title: title, credit: credit)
+                } else {
+                    info = try? await BingSource().fetchPreview(idx: bingIdx)
+                }
+                // The archive may have just loaded, which changes how far back we can go
+                updatePreviewNavigation()
             } else {
                 info = try? await CuratorisSource().fetchPreview(for: dateString)
             }
@@ -240,50 +259,43 @@ class MenuBarController: NSObject, ObservableObject {
         return "Last Update: \(f.string(from: last))"
     }
 
-    private var bingCreditLabel: String {
-        "Bing Attribution…"
-    }
-
-    private var bingCreditTooltip: String? {
-        bingCreditText.isEmpty ? nil : bingCreditText
-    }
-
-    @objc private func showBingCredit(_ sender: AnyObject?) {
-        let alert = NSAlert()
-        alert.messageText = "Bing Attribution"
-        alert.informativeText = bingCreditText.isEmpty ? "Bing Image" : bingCreditText
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    private func refreshBingCreditLabelIfNeeded() {
-        guard isBingSourceSelected() else {
-            if !bingCreditText.isEmpty {
-                bingCreditText = ""
-                lastBingCreditIndex = nil
-            }
+    private func updatePreviewNavigation() {
+        guard let date = curatorisChainDate else {
+            preview.canPrevious = false
+            preview.canNext = false
             return
         }
+        preview.canPrevious = canGoToPreviousDay()
+        preview.canNext = Calendar.current.startOfDay(for: date) < today()
+    }
 
-        let idx = currentBingIndex()
-        guard lastBingCreditIndex != idx || bingCreditText.isEmpty else { return }
-        lastBingCreditIndex = idx
+    /// Bing's own archive only serves about a week; the self-hosted archive goes back much further.
+    private static let directBingMaxIndex = 7
 
-        Task { @MainActor in
-            do {
-                let credit = try await fetchBingCreditLabel(idx: idx)
-                let nextText = credit ?? "Bing Image"
-                if bingCreditText != nextText {
-                    bingCreditText = nextText
-                    updateMenuBar()
-                }
-            } catch {
-                if bingCreditText != "Bing Image" {
-                    bingCreditText = "Bing Image"
-                    updateMenuBar()
-                }
-            }
+    private func canGoToPreviousDay() -> Bool {
+        guard let date = curatorisChainDate else { return false }
+        guard isBingSourceSelected() else { return date > Date(timeIntervalSince1970: 0) }
+        if let oldest = bingArchive.first.flatMap({ Self.chainDateFormatter.date(from: $0.day) }) {
+            return Calendar.current.startOfDay(for: date) > oldest
         }
+        return currentBingIndex() < Self.directBingMaxIndex
+    }
+
+    /// Loads the self-hosted Bing archive at most once a day; an empty result means use direct Bing.
+    private func loadBingArchiveIfNeeded() async {
+        if let fetchedAt = bingArchiveFetchedAt, Calendar.current.isDateInToday(fetchedAt) { return }
+        do {
+            bingArchive = try await BingSource().fetchArchive().sorted { $0.day < $1.day }
+            bingArchiveFetchedAt = Date()
+        } catch {
+            NSLog("Bing archive fetch failed, using direct Bing: \(error.localizedDescription)")
+        }
+    }
+
+    private func bingArchiveEntry(for dateString: String?) async -> BingArchiveEntry? {
+        guard let dateString else { return nil }
+        await loadBingArchiveIfNeeded()
+        return bingArchive.first { $0.day == dateString }
     }
 
     private func currentBingIndex() -> Int {
@@ -292,14 +304,6 @@ class MenuBarController: NSObject, ObservableObject {
         return max(0, daysDiff)
     }
 
-    private func fetchBingCreditLabel(idx: Int) async throws -> String? {
-        let safeIdx = max(0, idx)
-        let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=\(safeIdx)&n=1")!
-        let (data, _) = try await URLSession.shared.data(from: apiURL)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let images = json?["images"] as? [[String: Any]]
-        return images?.first?["copyright"] as? String
-    }
 
     @objc private func toggleAutoRefresh()     { autoRefreshEnabled.toggle() }
     @objc private func quitApp()               { NSApp.terminate(nil) }
@@ -320,8 +324,7 @@ class MenuBarController: NSObject, ObservableObject {
         guard !isInExcludedHours() else { return }
         Task { @MainActor in
             do {
-                let currentSource = UserDefaults.standard.string(forKey: "imageSource")
-                    ?? BuiltInSource.curatoris.rawValue
+                let currentSource = BuiltInSource.sanitized(UserDefaults.standard.string(forKey: "imageSource"))
                 let source = sourceProvider.source(forSelectionKey: currentSource)
                 let imageURL: URL?
                 let usedDate = overrideDate
@@ -338,8 +341,7 @@ class MenuBarController: NSObject, ObservableObject {
                 }
                 guard let imageURL else { return }
                 let localPath = try await wallpaperManager.downloadImage(from: imageURL)
-                let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
-                try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
+                try wallpaperManager.setDesktopWallpaper(to: localPath)
                 // Only update lastUpdateTime if not navigating history
                 if overrideDate == nil {
                     self.lastUpdateTime = Date()
@@ -355,18 +357,20 @@ class MenuBarController: NSObject, ObservableObject {
 
     // --- CLEANUP: Remove debug logs from Curatoris navigation and API ---
     private func setWallpaperForChainDate() {
-        guard let date = curatorisChainDate else { return }
+        guard curatorisChainDate != nil else { return }
         Task { @MainActor in
             do {
                 let imageURL: URL?
                 if isBingSourceSelected() {
-                    let daysDiff = Calendar.current.dateComponents([.day], from: date, to: today()).day ?? 0
-                    let idx = max(0, daysDiff)
-                    do {
-                        imageURL = try await BingSource().fetchImageURL(idx: idx)
-                    } catch {
-                        NSLog("Bing fetch error: \(error)")
-                        imageURL = nil
+                    if let entry = await bingArchiveEntry(for: formattedChainDate()) {
+                        imageURL = URL(string: entry.url)
+                    } else {
+                        do {
+                            imageURL = try await BingSource().fetchImageURL(idx: currentBingIndex())
+                        } catch {
+                            NSLog("Bing fetch error: \(error)")
+                            imageURL = nil
+                        }
                     }
                 } else {
                     let source = CuratorisSource()
@@ -383,9 +387,8 @@ class MenuBarController: NSObject, ObservableObject {
                     return
                 }
                 let localPath = try await wallpaperManager.downloadImage(from: imageURL)
-                let fillMode  = nsWorkspaceFillMode(for: wallpaperFillMode)
-                try wallpaperManager.setDesktopWallpaper(to: localPath, fillMode: fillMode)
-                self.lastUpdateTime = date
+                try wallpaperManager.setDesktopWallpaper(to: localPath)
+                self.lastUpdateTime = Date()
                 let source = isBingSourceSelected() ? BuiltInSource.bing.rawValue : BuiltInSource.curatoris.rawValue
                 appendHistory(imageURL: imageURL.absoluteString, source: source)
                 saveWallpaperToFolder(at: localPath)
@@ -397,7 +400,7 @@ class MenuBarController: NSObject, ObservableObject {
     }
 
     @objc func previous(_ sender: AnyObject?) {
-        guard isChainNavigationSourceSelected(), let chainDate = curatorisChainDate else { return }
+        guard isChainNavigationSourceSelected(), let chainDate = curatorisChainDate, canGoToPreviousDay() else { return }
         let prev = Calendar.current.date(byAdding: .day, value: -1, to: chainDate)!
         curatorisChainDate = prev
         autoRefreshEnabled = false
@@ -509,15 +512,6 @@ class MenuBarController: NSObject, ObservableObject {
         content.body      = "Your wallpaper has been refreshed by Curatoris."
         let request       = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
-    }
-
-    private func nsWorkspaceFillMode(for label: String) -> NSImageScaling {
-        switch label {
-        case "Fit":     return .scaleProportionallyUpOrDown
-        case "Stretch": return .scaleAxesIndependently
-        case "Center":  return .scaleNone
-        default:        return .scaleProportionallyUpOrDown
-        }
     }
 
     private func needsDailyUpdate() -> Bool {
@@ -640,11 +634,16 @@ class MenuBarController: NSObject, ObservableObject {
         Calendar.current.startOfDay(for: Date())
     }
 
+    private static let chainDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     private func formattedChainDate() -> String? {
         guard let date = curatorisChainDate else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        return Self.chainDateFormatter.string(from: date)
     }
 
     private func resetCuratorisChainToToday() {
@@ -683,13 +682,82 @@ struct WallpaperSourceProvider {
         case .curatoris: return CuratorisSource()
         case .bing:      return BingSource()
         case .picsum:    return PicsumSource()
-        case .pexels:    return PexelsSource()
         case nil:        return CustomURLSource(urlString: key)
         }
     }
 }
 
+/// Reads an API key from the environment, else from Info.plist (filled from Config.xcconfig at build time).
+func bundledAPIKey(environment: String, infoKey: String) -> String? {
+    if let env = ProcessInfo.processInfo.environment[environment], !env.isEmpty { return env }
+    guard let plist = Bundle.main.object(forInfoDictionaryKey: infoKey) as? String else { return nil }
+    let key = plist.trimmingCharacters(in: .whitespacesAndNewlines)
+    // An unset build setting leaves the value empty, or the literal "$(NAME)" if it was not expanded
+    return key.isEmpty || key.hasPrefix("$(") ? nil : key
+}
+
+/// Shared access to the self-hosted Curatoris API.
+enum CuratorisAPI {
+    static let baseURL = "https://curatoris.mattikjellstadli.com/api/curatoris"
+
+    static var apiKey: String? {
+        bundledAPIKey(environment: "CURATORIS_API_KEY", infoKey: "CuratorisAPIKey")
+    }
+
+    /// An authenticated GET request for a path under the API base, or nil when no key is configured.
+    static func request(path: String) -> URLRequest? {
+        guard let apiKey, let url = URL(string: baseURL + path) else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = false
+        return request
+    }
+}
+
+/// One day from the self-hosted Bing archive.
+struct BingArchiveEntry: Decodable {
+    let id: Int
+    let title: String
+    let url: String
+    let thumb: String?
+    let date: String?
+    let copyright: String?
+
+    /// The date as "yyyy-MM-dd" (empty when missing).
+    var day: String { String((date ?? "").prefix(10)) }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, url, thumb, thumbUrl, date, copyright
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        url = try c.decode(String.self, forKey: .url)
+        // The server entity names it thumbUrl; accept either
+        thumb = try c.decodeIfPresent(String.self, forKey: .thumb) ?? c.decodeIfPresent(String.self, forKey: .thumbUrl)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        copyright = try c.decodeIfPresent(String.self, forKey: .copyright)
+    }
+}
+
 struct BingSource: WallpaperSource {
+    /// Every day stored by the self-hosted Bing archive.
+    func fetchArchive() async throws -> [BingArchiveEntry] {
+        guard let request = CuratorisAPI.request(path: "/bing/all") else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode([BingArchiveEntry].self, from: data)
+    }
+
     func fetchImageURL(idx: Int = 0) async throws -> URL? {
         let safeIdx = max(0, idx)
         let apiURL = URL(string: "https://www.bing.com/HPImageArchive.aspx?format=js&idx=\(safeIdx)&n=1")!
@@ -739,12 +807,6 @@ struct PicsumSource: WallpaperSource {
 }
 
 struct CuratorisSource: WallpaperSource {
-    private func apiKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["CURATORIS_API_KEY"], !env.isEmpty { return env }
-        if let plist = Bundle.main.object(forInfoDictionaryKey: "CuratorisAPIKey") as? String, !plist.isEmpty { return plist }
-        return nil
-    }
-
     // Accepts an optional date string in yyyy-MM-dd format
     func fetchImageURL(for date: String? = nil) async throws -> URL? {
         guard let entry = try await fetchEntry(for: date) else { return nil }
@@ -768,35 +830,14 @@ struct CuratorisSource: WallpaperSource {
 
     /// Fetches the raw wallpaper JSON object for a date (or today's when nil).
     private func fetchEntry(for date: String?) async throws -> [String: Any]? {
-        guard let apiKey = apiKey() else {
+        guard let request = CuratorisAPI.request(path: date.map { "/date/\($0)" } ?? "") else {
             NSLog("CuratorisSource: Missing API key")
             return nil
         }
 
-        NSLog("CuratorisSource: API Key found: \(apiKey.prefix(10))...")
-
-        var comps: URLComponents
-        if let date = date {
-            comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris/date/\(date)")!
-        } else {
-            comps = URLComponents(string: "https://curatoris.mattikjellstadli.com/api/curatoris")!
-        }
-        var request = URLRequest(url: comps.url!)
-        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Curatoris/1.0", forHTTPHeaderField: "User-Agent")
-        request.httpShouldHandleCookies = false
-
         NSLog("CuratorisSource: Request URL: \(request.url?.absoluteString ?? "nil")")
-        NSLog("CuratorisSource: Request headers: \(request.allHTTPHeaderFields ?? [:])")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-
-        if let http = response as? HTTPURLResponse {
-            NSLog("CuratorisSource: HTTP Status Code: \(http.statusCode)")
-            NSLog("CuratorisSource: Response headers: \(http.allHeaderFields)")
-        }
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             NSLog("CuratorisSource: HTTP error \((response as? HTTPURLResponse)?.statusCode ?? -1)")
@@ -827,41 +868,6 @@ struct CuratorisSource: WallpaperSource {
 
     func fetchImageURL() async throws -> URL? {
         return try await fetchImageURL(for: nil)
-    }
-}
-
-struct PexelsSource: WallpaperSource {
-    private func apiKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["PEXELS_API_KEY"], !env.isEmpty { return env }
-        if let plist = Bundle.main.object(forInfoDictionaryKey: "PexelsAPIKey") as? String, !plist.isEmpty { return plist }
-        return nil
-    }
-
-    func fetchImageURL() async throws -> URL? {
-        guard let apiKey = apiKey() else { return nil }
-        let queries = ["landscape nature", "mountains", "ocean", "forest", "minimal landscape",
-                       "abstract gradient", "night sky", "desert", "snow landscape"]
-        var comps = URLComponents(string: "https://api.pexels.com/v1/search")!
-        comps.queryItems = [
-            URLQueryItem(name: "query",       value: queries.randomElement() ?? "landscape"),
-            URLQueryItem(name: "per_page",    value: "40"),
-            URLQueryItem(name: "orientation", value: "landscape"),
-            URLQueryItem(name: "size",        value: "large")
-        ]
-        var request = URLRequest(url: comps.url!)
-        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        guard let json   = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let photos = json["photos"] as? [[String: Any]] else { return nil }
-        let filtered = photos.filter { ($0["people"] as? Int ?? 0) == 0 }
-        guard let photo = (filtered.isEmpty ? photos : filtered).randomElement(),
-              let src = photo["src"] as? [String: Any] else { return nil }
-        if let str = src["original"] as? String, let url = URL(string: str) { return url }
-        for key in ["large2x", "large", "landscape"] {
-            if let str = src[key] as? String, var c = URLComponents(string: str) { c.queryItems = nil; return c.url }
-        }
-        return nil
     }
 }
 

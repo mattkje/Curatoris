@@ -124,7 +124,7 @@ final class SettingsModel: ObservableObject {
         self.refreshTime              = UserDefaults.standard.string(forKey: "refreshTime") ?? "08:00"
         self.everyHourEnabled         = UserDefaults.standard.bool(forKey: "everyHourEnabled")
         self.manualRefreshTimeEnabled = UserDefaults.standard.bool(forKey: "manualRefreshTimeEnabled")
-        self.imageSource              = UserDefaults.standard.string(forKey: "imageSource") ?? "Bing"
+        self.imageSource              = MenuBarController.BuiltInSource.sanitized(UserDefaults.standard.string(forKey: "imageSource"))
         self.openAtLogin              = UserDefaults.standard.bool(forKey: "openAtLogin")
         self.refreshOnWake            = UserDefaults.standard.bool(forKey: "refreshOnWake")
         self.notifyOnUpdate           = UserDefaults.standard.bool(forKey: "notifyOnUpdate")
@@ -416,7 +416,7 @@ private struct HistoryRow: View {
         // Set wallpaper using MenuBarController logic
         if let url = URL(string: entry.url) {
             Task {
-                let fillMode = nsImageScaling(for: model.wallpaperFillMode)
+                let fillMode = model.wallpaperFillMode
                 do {
                     let manager = WallpaperManager()
                     let localPath = try await manager.downloadImage(from: url)
@@ -426,17 +426,6 @@ private struct HistoryRow: View {
                     // Optionally handle error
                 }
             }
-        }
-    }
-
-    private func nsImageScaling(for mode: String) -> NSImageScaling {
-        switch mode.lowercased() {
-        case "fill": return .scaleProportionallyUpOrDown
-        case "fit": return .scaleProportionallyDown
-        case "stretch": return .scaleAxesIndependently
-        case "center": return .scaleNone
-        case "tile": return .scaleNone // macOS handles tiling via allowClipping, not scaling
-        default: return .scaleProportionallyUpOrDown
         }
     }
 }
@@ -458,7 +447,7 @@ public struct SettingsView: View {
     private let hours       = Array(0..<24)
     private let fillModes   = ["Fill", "Fit", "Stretch", "Center", "Tile"]
     private let historyLimits = [10, 20, 50, 100]
-    private let builtInSources = ["Curatoris", "Bing", "Picsum", "Pexels"]
+    private let builtInSources = MenuBarController.BuiltInSource.available.map(\.rawValue)
 
     private var hourlySupportedForCurrentSource: Bool {
         let src = model.imageSource
@@ -924,7 +913,7 @@ public struct SettingsView: View {
         KeychainHelper.delete(for: src.url)
         model.customSources.removeAll { $0.url == src.url }
         if model.imageSource == src.url {
-            model.imageSource = builtInSources.first ?? "Curatoris"
+            model.imageSource = MenuBarController.BuiltInSource.defaultSource.rawValue
         }
     }
 
