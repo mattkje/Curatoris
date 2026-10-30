@@ -416,7 +416,7 @@ private struct HistoryRow: View {
         // Set wallpaper using MenuBarController logic
         if let url = URL(string: entry.url) {
             Task {
-                let fillMode = nsImageScaling(for: model.wallpaperFillMode)
+                let fillMode = model.wallpaperFillMode
                 do {
                     let manager = WallpaperManager()
                     let localPath = try await manager.downloadImage(from: url)
@@ -426,17 +426,6 @@ private struct HistoryRow: View {
                     // Optionally handle error
                 }
             }
-        }
-    }
-
-    private func nsImageScaling(for mode: String) -> NSImageScaling {
-        switch mode.lowercased() {
-        case "fill": return .scaleProportionallyUpOrDown
-        case "fit": return .scaleProportionallyDown
-        case "stretch": return .scaleAxesIndependently
-        case "center": return .scaleNone
-        case "tile": return .scaleNone // macOS handles tiling via allowClipping, not scaling
-        default: return .scaleProportionallyUpOrDown
         }
     }
 }
