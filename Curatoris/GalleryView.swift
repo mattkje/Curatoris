@@ -46,6 +46,7 @@ struct GalleryView: View {
     @State private var hasMore: Bool = true
     @State private var currentSource: String = UserDefaults.standard.string(forKey: "imageSource") ?? "Curatoris"
     @State private var sourceCheckTimer: Timer? = nil
+    @State private var bingDate = Date()
     private let pageSize = 50
     private let apiBase = "https://curatoris.mattikjellstadli.com/api/curatoris"
     private var apiKey: String? {
@@ -64,83 +65,119 @@ struct GalleryView: View {
 
     var filteredWallpapers: [Wallpaper] {
         let list = wallpapers.filter { isBingSourceSelected || selectedCategory == "All" || ($0.category ?? "").localizedCaseInsensitiveContains(selectedCategory) }
-        if searchText.isEmpty { return list }
+        if isBingSourceSelected || searchText.isEmpty { return list }
         return list.filter { $0.title.localizedCaseInsensitiveContains(searchText) || ($0.description ?? "").localizedCaseInsensitiveContains(searchText) }
     }
 
     public var body: some View {
-        NavigationSplitView {
-            // Sidebar: Search + Categories (only for Curatoris)
-            VStack(alignment: .leading, spacing: 8) {
-                SearchBar(text: $searchText)
-                    .padding([.top, .horizontal])
+        Group {
+            if isBingSourceSelected {
+                // Bing has no categories, so skip the sidebar and browse by date instead
+                VStack(spacing: 0) {
+                    bingDateBar
+                    Divider()
+                    galleryContent
+                }
+            } else {
+                NavigationSplitView {
+                    // Sidebar: Search + Categories
+                    VStack(alignment: .leading, spacing: 8) {
+                        SearchBar(text: $searchText)
+                            .padding([.top, .horizontal])
 
-                Divider().padding(.horizontal)
+                        Divider().padding(.horizontal)
 
-                if !isBingSourceSelected {
-                    Text("Categories")
-                        .font(.headline)
-                        .padding(.horizontal)
+                        Text("Categories")
+                            .font(.headline)
+                            .padding(.horizontal)
 
-                    List {
-                        ForEach(categories, id: \.self) { cat in
-                            Button(action: {
-                                if selectedCategory != cat {
-                                    selectedCategory = cat
-                                    reloadWallpapers()
-                                }
-                            }) {
-                                ZStack {
-                                    if selectedCategory == cat {
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(Color.accentColor.opacity(0.15))
-                                    } else {
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(Color.accentColor.opacity(0.001))
+                        List {
+                            ForEach(categories, id: \.self) { cat in
+                                Button(action: {
+                                    if selectedCategory != cat {
+                                        selectedCategory = cat
+                                        reloadWallpapers()
                                     }
-                                    HStack {
-                                        Text(cat.capitalized)
-                                            .foregroundColor(selectedCategory == cat ? .accentColor : .primary)
-                                        Spacer()
+                                }) {
+                                    ZStack {
+                                        if selectedCategory == cat {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.accentColor.opacity(0.15))
+                                        } else {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.accentColor.opacity(0.001))
+                                        }
+                                        HStack {
+                                            Text(cat.capitalized)
+                                                .foregroundColor(selectedCategory == cat ? .accentColor : .primary)
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 8)
                                     }
-                                    .padding(.vertical, 6)
-                                    .padding(.horizontal, 8)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .buttonStyle(PlainButtonStyle())
+                                .contentShape(Rectangle())
+                                .listRowInsets(EdgeInsets())
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .buttonStyle(PlainButtonStyle())
-                            .contentShape(Rectangle())
-                            .listRowInsets(EdgeInsets())
                         }
+                        .listStyle(SidebarListStyle())
                     }
-                    .listStyle(SidebarListStyle())
+                    .frame(minWidth: 220)
+                } detail: {
+                    galleryContent
                 }
             }
-            .frame(minWidth: 220)
-        } detail: {
-            Group {
-                if isLoading {
-                    ProgressView().padding()
-                } else if let errorMessage = errorMessage {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(.orange)
-                        Text(errorMessage)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                } else if filteredWallpapers.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 40))
-                            .foregroundColor(.secondary)
-                        Text("No wallpapers found.")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                } else {
+        }
+        .navigationTitle("Gallery")
+        .onAppear(perform: initialLoad)
+        .onAppear {
+            startSourceMonitoring()
+        }
+        .onDisappear {
+            stopSourceMonitoring()
+        }
+        .sheet(isPresented: $showSetWallpaperSheet) {
+            if let wallpaper = selectedWallpaper {
+                SetWallpaperSheet(wallpaper: wallpaper, onSet: { url in
+                    setWallpaper(from: url)
+                }, onCancel: {
+                    showSetWallpaperSheet = false
+                })
+            }
+        }
+        .alert(item: $wallpaperActionMessage) { msg in
+            Alert(title: Text(msg.message))
+        }
+        .frame(minWidth: 700, minHeight: 420)
+    }
+
+    private var galleryContent: some View {
+        Group {
+            if isLoading {
+                ProgressView().padding()
+            } else if let errorMessage = errorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.orange)
+                    Text(errorMessage)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+            } else if filteredWallpapers.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text("No wallpapers found.")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+            } else {
+                ScrollViewReader { proxy in
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)], spacing: 16) {
                             ForEach(filteredWallpapers) { wallpaper in
@@ -152,6 +189,7 @@ struct GalleryView: View {
                                         showSetWallpaperSheet = true
                                     }
                                 )
+                                .id(wallpaper.id)
                             }
                         }
                         .padding()
@@ -174,30 +212,92 @@ struct GalleryView: View {
                             .disabled(isLoading)
                         }
                     }
+                    .onChange(of: bingDate) {
+                        guard isBingSourceSelected, let match = bingWallpaper(onOrBefore: bingDate) else { return }
+                        selectedWallpaper = match
+                        withAnimation { proxy.scrollTo(match.id, anchor: .center) }
+                    }
                 }
             }
-            .navigationTitle("Gallery")
         }
-        .onAppear(perform: initialLoad)
-        .onAppear {
-            startSourceMonitoring()
-        }
-        .onDisappear {
-            stopSourceMonitoring()
-        }
-        .sheet(isPresented: $showSetWallpaperSheet) {
-            if let wallpaper = selectedWallpaper {
-                SetWallpaperSheet(wallpaper: wallpaper, onSet: { url in
-                    setWallpaper(from: url)
-                }, onCancel: {
-                    showSetWallpaperSheet = false
-                })
+    }
+
+    // MARK: - Bing date bar
+
+    private var bingDateBar: some View {
+        let dates = bingDates
+        let current = bingWallpaper(onOrBefore: bingDate).flatMap { Self.parseWallpaperDate($0.date) }
+        let older = current.flatMap { c in dates.last { $0 < c } }
+        let newer = current.flatMap { c in dates.first { $0 > c } }
+        return HStack(spacing: 8) {
+            Button { if let older { bingDate = older } } label: {
+                Image(systemName: "chevron.left")
+            }
+            .disabled(older == nil)
+            .help("Previous day")
+
+            DatePicker(
+                "Date",
+                selection: $bingDate,
+                in: (dates.first ?? .distantPast)...(dates.last ?? Date()),
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.field)
+            .disabled(dates.isEmpty)
+
+            Button { if let newer { bingDate = newer } } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(newer == nil)
+            .help("Next day")
+
+            Button("Latest") { if let last = dates.last { bingDate = last } }
+                .disabled(dates.isEmpty || newer == nil)
+
+            Spacer()
+
+            if let title = bingWallpaper(onOrBefore: bingDate)?.title {
+                Text(title)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
-        .alert(item: $wallpaperActionMessage) { msg in
-            Alert(title: Text(msg.message))
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    /// Available Bing dates, sorted oldest first.
+    private var bingDates: [Date] {
+        wallpapers.compactMap { Self.parseWallpaperDate($0.date) }.sorted()
+    }
+
+    /// The wallpaper for the given day, or the closest earlier one if that day is missing.
+    private func bingWallpaper(onOrBefore date: Date) -> Wallpaper? {
+        let day = Calendar.current.startOfDay(for: date)
+        return wallpapers
+            .compactMap { wp in Self.parseWallpaperDate(wp.date).map { (wp, $0) } }
+            .filter { $0.1 <= day }
+            .max { $0.1 < $1.1 }?.0
+    }
+
+    // API returns "yyyy-MM-dd", direct Bing returns "yyyyMMdd"
+    private static let wallpaperDateFormatters: [DateFormatter] = ["yyyy-MM-dd", "yyyyMMdd"].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private static func parseWallpaperDate(_ string: String?) -> Date? {
+        guard let string, !string.isEmpty else { return nil }
+        for formatter in wallpaperDateFormatters {
+            if let date = formatter.date(from: string) { return date }
         }
-        .frame(minWidth: 700, minHeight: 420)
+        return nil
     }
 
     private func initialLoad() {
